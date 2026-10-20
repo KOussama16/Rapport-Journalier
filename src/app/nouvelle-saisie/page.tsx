@@ -1,27 +1,25 @@
 "use client";
 
 import { useMemo, useState, useId } from "react";
-import { Plus, Trash as Trash2, Package, Target, Percent, CircleAlert, FileCheck as FileCheck2, Clock, Factory, ClipboardList, Save, Info } from "lucide-react";
+import { Plus, Trash as Trash2, Package, Target, Percent, CircleAlert, FileCheck as FileCheck2, Clock, Factory, ClipboardList, Save, Info, Layers } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, Input } from "@/components/ui/select";
-import { PRODUCTS } from "@/lib/demo-data";
 import type { Unit, Shift } from "@/lib/types";
 import { cn, toISODate, formatNumber } from "@/lib/utils";
-
-const PRODUCTION_LINES = ["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8", "L9"] as const;
-type ProductionLine = (typeof PRODUCTION_LINES)[number];
+import {
+  PRODUCTION_LINES,
+  getProductById,
+  productsForLine,
+  isCompatible,
+  type ProductionLine,
+} from "@/lib/production-referential";
 
 const SHIFTS: { value: Shift; label: string }[] = [
   { value: "Matin", label: "Shift A — Matin" },
   { value: "Après-midi", label: "Shift B — Après-midi" },
   { value: "Nuit", label: "Nuit" },
-];
-
-// Preload product ids in the requested order
-const PRELOAD_PRODUCT_IDS = [
-  "p4", "p5", "p6", "p8", "p9", "p10", "p2", "p3", "p1", "p11", "p12", "p13", "p14", "p15", "p16",
 ];
 
 const UNIT_LABELS: Record<Unit, string> = {
@@ -33,29 +31,30 @@ const UNIT_LABELS: Record<Unit, string> = {
 
 interface ProductionRow {
   id: string;
+  line: ProductionLine | "";
   productId: string;
-  line: ProductionLine;
   unit: Unit;
   target: number;
   produced: number;
   conforme: number;
   rejete: number;
+  heureDebut: string;
+  heureFin: string;
 }
 
 let rowSeq = 0;
-function newRow(productId: string): ProductionRow {
-  const product = PRODUCTS.find((p) => p.id === productId);
-  const unit = product?.unit ?? "unité";
-  const target = Math.round((product?.baseObjective ?? 0) / 3);
+function makeRow(): ProductionRow {
   return {
     id: `row-${++rowSeq}`,
-    productId,
-    line: "L1",
-    unit,
-    target,
+    line: "",
+    productId: "",
+    unit: "unité",
+    target: 0,
     produced: 0,
     conforme: 0,
     rejete: 0,
+    heureDebut: "",
+    heureFin: "",
   };
 }
 
@@ -65,9 +64,26 @@ function clampNonNeg(v: string): number {
   return n;
 }
 
+function rateOf(target: number, produced: number): number | null {
+  if (!target || target <= 0) return null;
+  return (produced / target) * 100;
+}
+
+function rateColor(rate: number | null): string {
+  if (rate === null) return "#64748b";
+  if (rate >= 95) return "#16a34a";
+  if (rate >= 80) return "#f97316";
+  return "#dc2626";
+}
+
+function rateBadge(rate: number | null): string {
+  return rate !== null ? `${rate.toFixed(1)}%` : "—";
+}
+
 const EMPTY_SUMMARY = {
   byUnit: {} as Record<Unit, { target: number; produced: number; conforme: number; rejete: number; rows: number }>,
-  rows: 0,
+  sequences: 0,
+  linesUsed: 0,
 };
 
 export default function NouvelleSaisiePage() {
@@ -82,8 +98,8 @@ export default function NouvelleSaisiePage() {
   const [heureFin, setHeureFin] = useState("14:00");
   const [observations, setObservations] = useState("");
 
-  // Production rows
-  const [rows, setRows] = useState<ProductionRow[]>(() => PRELOAD_PRODUCT_IDS.map(newRow));
+  // Production rows — start empty; the operator chooses a line first, then a product.
+  const [rows, setRows] = useState<ProductionRow[]>([makeRow()]);
 
   // Saved state
   const [saved, setSaved] = useState(false);
@@ -94,24 +110,42 @@ export default function NouvelleSaisiePage() {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }
 
+  function changeLine(id: string, newLine: ProductionLine) {
+    const row = rows.find((r) => r.id === id);
+    if (!row) return;
+    // If a product is selected and is no longer compatible with the new line, reset it.
+    if (row.productId && !isCompatible(row.productId, newLine)) {
+      updateRow(id, { line: newLine, productId: "", unit: "unité", target: 0 });
+    } else {
+      updateRow(id, { line: newLine });
+    }
+  }
+
   function changeProduct(id: string, productId: string) {
-    const product = PRODUCTS.find((p) => p.id === productId);
-    if (!product) return;
-    updateRow(id, { productId, unit: product.unit });
+    const product = getProductById(productId);
+    if (!product) {
+      updateRow(id, { productId: "", unit: "unité", target: 0 });
+      return;
+    }
+    updateRow(id, { productId, unit: product.unit, target: product.defaultTarget });
   }
 
   function addRow() {
-    setRows((prev) => [...prev, newRow(PRODUCTS[0].id)]);
+    setRows((prev) => [...prev, makeRow()]);
   }
 
   function removeRow(id: string) {
-    setRows((prev) => prev.filter((r) => r.id !== id));
+    setRows((prev) => (prev.length > 1 ? prev.filter((r) => r.id !== id) : prev));
   }
 
   const summary = useMemo(() => {
-    if (rows.length === 0) return { ...EMPTY_SUMMARY, rows: 0 };
     const byUnit = {} as Record<Unit, { target: number; produced: number; conforme: number; rejete: number; rows: number }>;
+    const lines = new Set<string>();
+    let sequences = 0;
     for (const r of rows) {
+      if (!r.productId) continue;
+      sequences += 1;
+      lines.add(r.line);
       if (!byUnit[r.unit]) byUnit[r.unit] = { target: 0, produced: 0, conforme: 0, rejete: 0, rows: 0 };
       const u = byUnit[r.unit];
       u.target += r.target;
@@ -120,7 +154,7 @@ export default function NouvelleSaisiePage() {
       u.rejete += r.rejete;
       u.rows += 1;
     }
-    return { byUnit, rows: rows.length };
+    return { byUnit, sequences, linesUsed: lines.size };
   }, [rows]);
 
   const overallRate = useMemo(() => {
@@ -133,13 +167,15 @@ export default function NouvelleSaisiePage() {
     return t > 0 ? (p / t) * 100 : null;
   }, [summary]);
 
+  const validSequences = rows.filter((r) => r.line && r.productId).length;
+
   return (
     <div className="space-y-6">
       {/* Page intro */}
       <div className="flex flex-col gap-1 animate-fade-in">
         <h1 className="text-xl font-bold text-foreground">Nouvelle saisie de rapport</h1>
         <p className="text-sm text-muted-foreground">
-          Étape 1 — Informations générales et saisie de la production. Les pertes, arrêts et incidents qualité seront ajoutés à l'étape suivante.
+          Étape 1 — Informations générales et saisie de la production. Les pertes, arrêts et incidents qualité seront ajoutés à l&apos;étape suivante.
         </p>
       </div>
 
@@ -225,127 +261,152 @@ export default function NouvelleSaisiePage() {
             <CardTitle className="flex items-center gap-2">
               <Factory className="h-4 w-4 text-secondary" /> Saisie de la production
             </CardTitle>
-            <CardDescription>Ajoutez les produits réalisés sur cette équipe</CardDescription>
+            <CardDescription>
+              Sélectionnez une ligne, puis un produit compatible. Une ligne peut apparaître plusieurs fois lors d&apos;un changement de produit.
+            </CardDescription>
           </div>
           <Button variant="secondary" size="sm" onClick={addRow}>
-            <Plus className="h-4 w-4" /> Ajouter un produit
+            <Plus className="h-4 w-4" /> Ajouter une ligne
           </Button>
         </CardHeader>
         <CardContent className="px-0">
-          {rows.length === 0 ? (
-            <div className="px-5 py-10 text-center">
-              <Package className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">Aucun produit saisi. Cliquez sur « Ajouter un produit ».</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                    <th className="px-3 py-3 font-medium">Produit</th>
-                    <th className="px-3 py-3 font-medium">Ligne</th>
-                    <th className="px-3 py-3 font-medium">Unité</th>
-                    <th className="px-3 py-3 text-right font-medium">Qté cible</th>
-                    <th className="px-3 py-3 text-right font-medium">Qté réalisée</th>
-                    <th className="px-3 py-3 text-right font-medium">Conforme</th>
-                    <th className="px-3 py-3 text-right font-medium">Rejetée</th>
-                    <th className="px-3 py-3 text-right font-medium">Écart</th>
-                    <th className="px-3 py-3 font-medium">Taux</th>
-                    <th className="px-3 py-3 font-medium" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => {
-                    const ecart = r.produced - r.target;
-                    const rate = r.target > 0 ? (r.produced / r.target) * 100 : 0;
-                    const rateColor = rate >= 95 ? "#16a34a" : rate >= 80 ? "#f97316" : "#dc2626";
-                    const ecartColor = ecart >= 0 ? "text-accent" : "text-error";
-                    return (
-                      <tr key={r.id} className="border-b border-border/50 align-middle hover:bg-muted/40">
-                        <td className="px-3 py-2 min-w-[200px]">
-                          <select
-                            value={r.productId}
-                            onChange={(e) => changeProduct(r.id, e.target.value)}
-                            className="h-9 w-full rounded-lg border border-border bg-card px-2 text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                          >
-                            {PRODUCTS.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.name}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-3 py-2">
-                          <select
-                            value={r.line}
-                            onChange={(e) => updateRow(r.id, { line: e.target.value as ProductionLine })}
-                            className="h-9 rounded-lg border border-border bg-card px-2 text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                          >
-                            {PRODUCTION_LINES.map((l) => (
-                              <option key={l} value={l}>
-                                {l}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-3 py-2">
-                          <span className="inline-flex rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
-                            {UNIT_LABELS[r.unit]}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[1100px]">
+              <thead>
+                <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                  <th className="px-3 py-3 font-medium w-[90px]">Ligne</th>
+                  <th className="px-3 py-3 font-medium min-w-[220px]">Produit</th>
+                  <th className="px-3 py-3 font-medium w-[70px]">Unité</th>
+                  <th className="px-3 py-3 text-right font-medium w-[100px]">Qté cible</th>
+                  <th className="px-3 py-3 text-right font-medium w-[100px]">Qté réalisée</th>
+                  <th className="px-3 py-3 text-right font-medium w-[100px]">Conforme</th>
+                  <th className="px-3 py-3 text-right font-medium w-[100px]">Rejetée</th>
+                  <th className="px-3 py-3 text-right font-medium w-[110px]">Écart</th>
+                  <th className="px-3 py-3 font-medium w-[80px]">Taux</th>
+                  <th className="px-3 py-3 font-medium w-[90px]">Début</th>
+                  <th className="px-3 py-3 font-medium w-[90px]">Fin</th>
+                  <th className="px-3 py-3 font-medium w-[44px]" />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const ecart = r.produced - r.target;
+                  const rate = rateOf(r.target, r.produced);
+                  const rColor = rateColor(rate);
+                  const ecartColor = ecart >= 0 ? "text-accent" : "text-error";
+                  const availableProducts = r.line ? productsForLine(r.line) : [];
+                  const product = r.productId ? getProductById(r.productId) : undefined;
+
+                  return (
+                    <tr key={r.id} className="border-b border-border/50 align-middle hover:bg-muted/40">
+                      <td className="px-3 py-2">
+                        <select
+                          value={r.line}
+                          onChange={(e) => changeLine(r.id, e.target.value as ProductionLine)}
+                          className="h-9 w-full rounded-lg border border-border bg-card px-2 text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                        >
+                          <option value="">—</option>
+                          {PRODUCTION_LINES.map((l) => (
+                            <option key={l} value={l}>
+                              {l}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-3 py-2">
+                        <select
+                          value={r.productId}
+                          disabled={!r.line}
+                          onChange={(e) => changeProduct(r.id, e.target.value)}
+                          className={cn(
+                            "h-9 w-full rounded-lg border border-border bg-card px-2 text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring",
+                            !r.line && "cursor-not-allowed opacity-50"
+                          )}
+                        >
+                          <option value="">{r.line ? "Sélectionner un produit" : "Choisir une ligne d&apos;abord"}</option>
+                          {availableProducts.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
+                        {product && (
+                          <span className="mt-1 block text-[10px] text-muted-foreground">
+                            Lignes autorisées : {product.allowedLines.join(", ")}
                           </span>
-                        </td>
-                        <td className="px-3 py-2">
-                          <NumInput
-                            value={r.target}
-                            onChange={(v) => updateRow(r.id, { target: v })}
-                          />
-                        </td>
-                        <td className="px-3 py-2">
-                          <NumInput
-                            value={r.produced}
-                            onChange={(v) => updateRow(r.id, { produced: v })}
-                          />
-                        </td>
-                        <td className="px-3 py-2">
-                          <NumInput
-                            value={r.conforme}
-                            onChange={(v) => updateRow(r.id, { conforme: v })}
-                          />
-                        </td>
-                        <td className="px-3 py-2">
-                          <NumInput
-                            value={r.rejete}
-                            onChange={(v) => updateRow(r.id, { rejete: v })}
-                          />
-                        </td>
-                        <td className={cn("px-3 py-2 text-right whitespace-nowrap font-medium", ecartColor)}>
-                          {ecart >= 0 ? "+" : ""}
-                          {formatNumber(ecart, 1)} <span className="text-muted-foreground font-normal">{UNIT_LABELS[r.unit]}</span>
-                        </td>
-                        <td className="px-3 py-2">
-                          <span
-                            className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-semibold"
-                            style={{ backgroundColor: `${rateColor}15`, color: rateColor }}
-                          >
-                            {rate.toFixed(1)}%
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <button
-                            onClick={() => removeRow(r.id)}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-error/10 hover:text-error"
-                            aria-label="Supprimer la ligne"
-                            title="Supprimer"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className="inline-flex rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
+                          {UNIT_LABELS[r.unit]}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <NumInput value={r.target} onChange={(v) => updateRow(r.id, { target: v })} />
+                      </td>
+                      <td className="px-3 py-2">
+                        <NumInput value={r.produced} onChange={(v) => updateRow(r.id, { produced: v })} />
+                      </td>
+                      <td className="px-3 py-2">
+                        <NumInput value={r.conforme} onChange={(v) => updateRow(r.id, { conforme: v })} />
+                      </td>
+                      <td className="px-3 py-2">
+                        <NumInput value={r.rejete} onChange={(v) => updateRow(r.id, { rejete: v })} />
+                      </td>
+                      <td className={cn("px-3 py-2 text-right whitespace-nowrap font-medium", ecartColor)}>
+                        {ecart >= 0 ? "+" : ""}
+                        {formatNumber(ecart, 1)} <span className="text-muted-foreground font-normal">{UNIT_LABELS[r.unit]}</span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <span
+                          className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-semibold"
+                          style={{ backgroundColor: `${rColor}15`, color: rColor }}
+                        >
+                          {rateBadge(rate)}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="time"
+                          value={r.heureDebut}
+                          onChange={(e) => updateRow(r.id, { heureDebut: e.target.value })}
+                          className="h-9 w-full rounded-lg border border-border bg-card px-1 text-xs text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="time"
+                          value={r.heureFin}
+                          onChange={(e) => updateRow(r.id, { heureFin: e.target.value })}
+                          className="h-9 w-full rounded-lg border border-border bg-card px-1 text-xs text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          onClick={() => removeRow(r.id)}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-error/10 hover:text-error disabled:opacity-30"
+                          aria-label="Supprimer la ligne"
+                          title="Supprimer"
+                          disabled={rows.length === 1}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-4">
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">{validSequences}</span> séquence(s) validée(s) · {rows.length - validSequences} incomplète(s)
+            </p>
+            <Button variant="outline" size="sm" onClick={addRow}>
+              <Plus className="h-4 w-4" /> Ajouter une ligne
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -353,29 +414,29 @@ export default function NouvelleSaisiePage() {
       <Card className="animate-fade-in border-secondary/30 bg-gradient-to-r from-secondary/5 to-transparent">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <FileCheck2 className="h-4 w-4 text-secondary" /> Récapitulatif
+            <FileCheck2 className="h-4 w-4 text-secondary" /> Récapitulatif de production
           </CardTitle>
-          <CardDescription>Synthèse par unité de mesure — calculs en temps réel</CardDescription>
+          <CardDescription>Synthèse par unité de mesure — calculs en temps réel, unités non mélangées</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <SummaryStat
-              icon={Package}
+              icon={Layers}
               color="#2563eb"
-              label="Produits saisis"
-              value={String(summary.rows)}
+              label="Séquences saisies"
+              value={String(summary.sequences)}
+            />
+            <SummaryStat
+              icon={Factory}
+              color="#0891b2"
+              label="Lignes utilisées"
+              value={String(summary.linesUsed)}
             />
             <SummaryStat
               icon={Target}
-              color="#0891b2"
+              color={rateColor(overallRate)}
               label="Taux de réalisation global"
               value={overallRate !== null ? `${overallRate.toFixed(1)} %` : "—"}
-            />
-            <SummaryStat
-              icon={Percent}
-              color={overallRate !== null && overallRate >= 95 ? "#16a34a" : overallRate !== null && overallRate >= 80 ? "#f97316" : "#dc2626"}
-              label="Unités représentées"
-              value={String(Object.keys(summary.byUnit).length)}
             />
             <SummaryStat
               icon={Clock}
@@ -387,11 +448,11 @@ export default function NouvelleSaisiePage() {
 
           {/* Per-unit breakdown */}
           <div className="mt-5 overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm min-w-[640px]">
               <thead>
                 <tr className="border-b border-border text-left text-xs text-muted-foreground">
                   <th className="px-3 py-2 font-medium">Unité</th>
-                  <th className="px-3 py-2 text-right font-medium">Lignes</th>
+                  <th className="px-3 py-2 text-right font-medium">Séquences</th>
                   <th className="px-3 py-2 text-right font-medium">Qté cible</th>
                   <th className="px-3 py-2 text-right font-medium">Qté réalisée</th>
                   <th className="px-3 py-2 text-right font-medium">Conforme</th>
@@ -404,14 +465,14 @@ export default function NouvelleSaisiePage() {
                 {Object.entries(summary.byUnit).length === 0 ? (
                   <tr>
                     <td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">
-                      Aucun produit saisi.
+                      Aucune séquence complète. Sélectionnez une ligne et un produit.
                     </td>
                   </tr>
                 ) : (
                   Object.entries(summary.byUnit).map(([unit, d]) => {
                     const ecart = d.produced - d.target;
-                    const rate = d.target > 0 ? (d.produced / d.target) * 100 : 0;
-                    const rateColor = rate >= 95 ? "#16a34a" : rate >= 80 ? "#f97316" : "#dc2626";
+                    const rate = rateOf(d.target, d.produced);
+                    const rColor = rateColor(rate);
                     return (
                       <tr key={unit} className="border-b border-border/50">
                         <td className="px-3 py-2 font-medium">{UNIT_LABELS[unit as Unit]}</td>
@@ -427,9 +488,9 @@ export default function NouvelleSaisiePage() {
                         <td className="px-3 py-2">
                           <span
                             className="inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold"
-                            style={{ backgroundColor: `${rateColor}15`, color: rateColor }}
+                            style={{ backgroundColor: `${rColor}15`, color: rColor }}
                           >
-                            {rate.toFixed(1)}%
+                            {rateBadge(rate)}
                           </span>
                         </td>
                       </tr>
@@ -453,7 +514,7 @@ export default function NouvelleSaisiePage() {
         <Button
           variant="secondary"
           size="lg"
-          disabled={!generalValid || rows.length === 0}
+          disabled={!generalValid || validSequences === 0}
           onClick={() => setSaved(true)}
         >
           <Save className="h-4 w-4" /> Enregistrer l&apos;étape 1
@@ -472,7 +533,7 @@ function NumInput({ value, onChange }: { value: number; onChange: (v: number) =>
       value={value === 0 ? "" : value}
       placeholder="0"
       onChange={(e) => onChange(clampNonNeg(e.target.value))}
-      className="h-9 w-24 rounded-lg border border-border bg-card px-2 text-right text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+      className="h-9 w-full rounded-lg border border-border bg-card px-2 text-right text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
     />
   );
 }

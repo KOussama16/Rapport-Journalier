@@ -1,12 +1,11 @@
 "use client";
 
-import { useMemo, useState, useId } from "react";
-import { Plus, Trash as Trash2, Package, Target, Percent, CircleAlert, FileCheck as FileCheck2, Clock, Factory, ClipboardList, Save, Info, Layers, Sunrise, Sunset } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Plus, Trash as Trash2, Package, Target, Percent, FileCheck as FileCheck2, Clock, Factory, Save, Info, Layers, Sunrise, Sunset, Calendar } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Select, Input } from "@/components/ui/select";
-import type { Unit, Shift } from "@/lib/types";
+import type { Unit } from "@/lib/types";
 import { cn, toISODate, formatNumber } from "@/lib/utils";
 import {
   PRODUCTION_LINES,
@@ -15,12 +14,6 @@ import {
   isCompatible,
   type ProductionLine,
 } from "@/lib/production-referential";
-
-const SHIFTS: { value: Shift; label: string }[] = [
-  { value: "Matin", label: "Shift A — Matin" },
-  { value: "Après-midi", label: "Shift B — Après-midi" },
-  { value: "Nuit", label: "Nuit" },
-];
 
 const SHIFT_TABLES: { key: "A" | "B"; label: string; icon: typeof Factory; start: string; end: string }[] = [
   { key: "A", label: "Shift A", icon: Sunrise, start: "08:00", end: "15:30" },
@@ -81,23 +74,8 @@ function rateBadge(rate: number | null): string {
   return rate !== null ? `${rate.toFixed(1)}%` : "—";
 }
 
-const EMPTY_SUMMARY = {
-  byUnit: {} as Record<Unit, { target: number; produced: number; conforme: number; rejete: number; rows: number }>,
-  sequences: 0,
-  linesUsed: 0,
-};
-
 export default function NouvelleSaisiePage() {
-  const reactId = useId();
   const today = toISODate(new Date());
-
-  // General info
-  const [date, setDate] = useState(today);
-  const [shift, setShift] = useState<Shift>("Matin");
-  const [responsable, setResponsable] = useState("");
-  const [heureDebut, setHeureDebut] = useState("06:00");
-  const [heureFin, setHeureFin] = useState("14:00");
-  const [observations, setObservations] = useState("");
 
   // Production rows per shift — each shift has its own independent table.
   const [rowsA, setRowsA] = useState<ProductionRow[]>([makeRow()]);
@@ -106,7 +84,13 @@ export default function NouvelleSaisiePage() {
   // Saved state
   const [saved, setSaved] = useState(false);
 
-  const generalValid = date && shift && responsable.trim().length > 0 && heureDebut && heureFin;
+  // Date is auto-filled with today's date (JJ/MM/AAAA).
+  const dateDisplay = new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(new Date());
+  const generalValid = Boolean(today);
 
   type ShiftKey = "A" | "B";
   function rowsFor(key: ShiftKey): ProductionRow[] {
@@ -207,69 +191,19 @@ export default function NouvelleSaisiePage() {
       <Card className="animate-fade-in">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <ClipboardList className="h-4 w-4 text-secondary" /> Informations générales
+            <Calendar className="h-4 w-4 text-secondary" /> Date de production
           </CardTitle>
-          <CardDescription>Identification du rapport de production</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor={`${reactId}-date`} className="text-xs font-medium text-muted-foreground">
-                Date de production
-              </label>
-              <input
-                id={`${reactId}-date`}
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="h-9 rounded-lg border border-border bg-card px-3 text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-              />
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary/10">
+              <Calendar className="h-5 w-5 text-secondary" />
             </div>
-            <Select label="Équipe" value={shift} onChange={(e) => setShift(e.target.value as Shift)}>
-              {SHIFTS.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </Select>
-            <Input
-              label="Responsable de production"
-              placeholder="Nom du responsable"
-              value={responsable}
-              onChange={(e) => setResponsable(e.target.value)}
-            />
-            <Input
-              label="Heure de début du shift"
-              type="time"
-              value={heureDebut}
-              onChange={(e) => setHeureDebut(e.target.value)}
-            />
-            <Input
-              label="Heure de fin du shift"
-              type="time"
-              value={heureFin}
-              onChange={(e) => setHeureFin(e.target.value)}
-            />
-            <div className="flex flex-col gap-1.5 sm:col-span-1 lg:col-span-3">
-              <label htmlFor={`${reactId}-obs`} className="text-xs font-medium text-muted-foreground">
-                Observations générales
-              </label>
-              <textarea
-                id={`${reactId}-obs`}
-                rows={3}
-                value={observations}
-                onChange={(e) => setObservations(e.target.value)}
-                placeholder="Contexte, événements particuliers, commentaires sur la journée…"
-                className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-              />
+            <div>
+              <p className="text-lg font-bold text-foreground">{dateDisplay}</p>
+              <p className="text-xs text-muted-foreground">Date du jour, renseignée automatiquement</p>
             </div>
           </div>
-          {!generalValid && (
-            <p className="mt-3 flex items-center gap-1.5 text-xs text-warning">
-              <CircleAlert className="h-3.5 w-3.5" />
-              La date, l&apos;équipe, le responsable et les heures de shift sont obligatoires.
-            </p>
-          )}
         </CardContent>
       </Card>
 
@@ -450,8 +384,8 @@ export default function NouvelleSaisiePage() {
             <SummaryStat
               icon={Clock}
               color="#f97316"
-              label="Amplitude shift"
-              value={shiftDuration(heureDebut, heureFin)}
+              label="Amplitude totale (A + B)"
+              value={shiftDuration(SHIFT_TABLES[0].start, SHIFT_TABLES[SHIFT_TABLES.length - 1].end)}
             />
           </div>
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useId } from "react";
-import { Plus, Trash as Trash2, Package, Target, Percent, CircleAlert, FileCheck as FileCheck2, Clock, Factory, ClipboardList, Save, Info, Layers } from "lucide-react";
+import { Plus, Trash as Trash2, Package, Target, Percent, CircleAlert, FileCheck as FileCheck2, Clock, Factory, ClipboardList, Save, Info, Layers, Sunrise, Sunset } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +22,11 @@ const SHIFTS: { value: Shift; label: string }[] = [
   { value: "Nuit", label: "Nuit" },
 ];
 
+const SHIFT_TABLES: { key: "A" | "B"; label: string; icon: typeof Factory; start: string; end: string }[] = [
+  { key: "A", label: "Shift A", icon: Sunrise, start: "08:00", end: "15:30" },
+  { key: "B", label: "Shift B", icon: Sunset, start: "15:30", end: "22:00" },
+];
+
 const UNIT_LABELS: Record<Unit, string> = {
   kg: "kg",
   g: "g",
@@ -38,8 +43,6 @@ interface ProductionRow {
   produced: number;
   conforme: number;
   rejete: number;
-  heureDebut: string;
-  heureFin: string;
 }
 
 let rowSeq = 0;
@@ -53,8 +56,6 @@ function makeRow(): ProductionRow {
     produced: 0,
     conforme: 0,
     rejete: 0,
-    heureDebut: "",
-    heureFin: "",
   };
 }
 
@@ -98,47 +99,56 @@ export default function NouvelleSaisiePage() {
   const [heureFin, setHeureFin] = useState("14:00");
   const [observations, setObservations] = useState("");
 
-  // Production rows — start empty; the operator chooses a line first, then a product.
-  const [rows, setRows] = useState<ProductionRow[]>([makeRow()]);
+  // Production rows per shift — each shift has its own independent table.
+  const [rowsA, setRowsA] = useState<ProductionRow[]>([makeRow()]);
+  const [rowsB, setRowsB] = useState<ProductionRow[]>([makeRow()]);
 
   // Saved state
   const [saved, setSaved] = useState(false);
 
   const generalValid = date && shift && responsable.trim().length > 0 && heureDebut && heureFin;
 
-  function updateRow(id: string, patch: Partial<ProductionRow>) {
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  type ShiftKey = "A" | "B";
+  function rowsFor(key: ShiftKey): ProductionRow[] {
+    return key === "A" ? rowsA : rowsB;
+  }
+  function setRowsFor(key: ShiftKey, updater: (prev: ProductionRow[]) => ProductionRow[]) {
+    if (key === "A") setRowsA(updater);
+    else setRowsB(updater);
   }
 
-  function changeLine(id: string, newLine: ProductionLine) {
-    const row = rows.find((r) => r.id === id);
+  function updateRow(key: ShiftKey, id: string, patch: Partial<ProductionRow>) {
+    setRowsFor(key, (prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  }
+
+  function changeLine(key: ShiftKey, id: string, newLine: ProductionLine) {
+    const row = rowsFor(key).find((r) => r.id === id);
     if (!row) return;
-    // If a product is selected and is no longer compatible with the new line, reset it.
     if (row.productId && !isCompatible(row.productId, newLine)) {
-      updateRow(id, { line: newLine, productId: "", unit: "unité", target: 0 });
+      updateRow(key, id, { line: newLine, productId: "", unit: "unité", target: 0 });
     } else {
-      updateRow(id, { line: newLine });
+      updateRow(key, id, { line: newLine });
     }
   }
 
-  function changeProduct(id: string, productId: string) {
+  function changeProduct(key: ShiftKey, id: string, productId: string) {
     const product = getProductById(productId);
     if (!product) {
-      updateRow(id, { productId: "", unit: "unité", target: 0 });
+      updateRow(key, id, { productId: "", unit: "unité", target: 0 });
       return;
     }
-    updateRow(id, { productId, unit: product.unit, target: product.defaultTarget });
+    updateRow(key, id, { productId, unit: product.unit, target: product.defaultTarget });
   }
 
-  function addRow() {
-    setRows((prev) => [...prev, makeRow()]);
+  function addRow(key: ShiftKey) {
+    setRowsFor(key, (prev) => [...prev, makeRow()]);
   }
 
-  function removeRow(id: string) {
-    setRows((prev) => (prev.length > 1 ? prev.filter((r) => r.id !== id) : prev));
+  function removeRow(key: ShiftKey, id: string) {
+    setRowsFor(key, (prev) => (prev.length > 1 ? prev.filter((r) => r.id !== id) : prev));
   }
 
-  const summary = useMemo(() => {
+  function summarize(rows: ProductionRow[]) {
     const byUnit = {} as Record<Unit, { target: number; produced: number; conforme: number; rejete: number; rows: number }>;
     const lines = new Set<string>();
     let sequences = 0;
@@ -155,7 +165,14 @@ export default function NouvelleSaisiePage() {
       u.rows += 1;
     }
     return { byUnit, sequences, linesUsed: lines.size };
-  }, [rows]);
+  }
+
+  const summaryA = useMemo(() => summarize(rowsA), [rowsA]);
+  const summaryB = useMemo(() => summarize(rowsB), [rowsB]);
+
+  const allRows = useMemo(() => [...rowsA, ...rowsB], [rowsA, rowsB]);
+
+  const summary = useMemo(() => summarize(allRows), [allRows]);
 
   const overallRate = useMemo(() => {
     let t = 0;
@@ -167,7 +184,9 @@ export default function NouvelleSaisiePage() {
     return t > 0 ? (p / t) * 100 : null;
   }, [summary]);
 
-  const validSequences = rows.filter((r) => r.line && r.productId).length;
+  const validSequences = allRows.filter((r) => r.line && r.productId).length;
+  const validA = rowsA.filter((r) => r.line && r.productId).length;
+  const validB = rowsB.filter((r) => r.line && r.productId).length;
 
   return (
     <div className="space-y-6">
@@ -254,161 +273,151 @@ export default function NouvelleSaisiePage() {
         </CardContent>
       </Card>
 
-      {/* Section 2: Production entries */}
-      <Card className="animate-fade-in">
-        <CardHeader className="flex flex-row items-center justify-between gap-4">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <Factory className="h-4 w-4 text-secondary" /> Saisie de la production
-            </CardTitle>
-            <CardDescription>
-              Sélectionnez une ligne, puis un produit compatible. Une ligne peut apparaître plusieurs fois lors d&apos;un changement de produit.
-            </CardDescription>
-          </div>
-          <Button variant="secondary" size="sm" onClick={addRow}>
-            <Plus className="h-4 w-4" /> Ajouter une ligne
-          </Button>
-        </CardHeader>
-        <CardContent className="px-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[1100px]">
-              <thead>
-                <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                  <th className="px-3 py-3 font-medium w-[90px]">Ligne</th>
-                  <th className="px-3 py-3 font-medium min-w-[220px]">Produit</th>
-                  <th className="px-3 py-3 font-medium w-[70px]">Unité</th>
-                  <th className="px-3 py-3 text-right font-medium w-[100px]">Qté cible</th>
-                  <th className="px-3 py-3 text-right font-medium w-[100px]">Qté réalisée</th>
-                  <th className="px-3 py-3 text-right font-medium w-[100px]">Conforme</th>
-                  <th className="px-3 py-3 text-right font-medium w-[100px]">Rejetée</th>
-                  <th className="px-3 py-3 text-right font-medium w-[110px]">Écart</th>
-                  <th className="px-3 py-3 font-medium w-[80px]">Taux</th>
-                  <th className="px-3 py-3 font-medium w-[90px]">Début</th>
-                  <th className="px-3 py-3 font-medium w-[90px]">Fin</th>
-                  <th className="px-3 py-3 font-medium w-[44px]" />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => {
-                  const ecart = r.produced - r.target;
-                  const rate = rateOf(r.target, r.produced);
-                  const rColor = rateColor(rate);
-                  const ecartColor = ecart >= 0 ? "text-accent" : "text-error";
-                  const availableProducts = r.line ? productsForLine(r.line) : [];
-                  const product = r.productId ? getProductById(r.productId) : undefined;
-
-                  return (
-                    <tr key={r.id} className="border-b border-border/50 align-middle hover:bg-muted/40">
-                      <td className="px-3 py-2">
-                        <select
-                          value={r.line}
-                          onChange={(e) => changeLine(r.id, e.target.value as ProductionLine)}
-                          className="h-9 w-full rounded-lg border border-border bg-card px-2 text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                        >
-                          <option value="">—</option>
-                          {PRODUCTION_LINES.map((l) => (
-                            <option key={l} value={l}>
-                              {l}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="px-3 py-2">
-                        <select
-                          value={r.productId}
-                          disabled={!r.line}
-                          onChange={(e) => changeProduct(r.id, e.target.value)}
-                          className={cn(
-                            "h-9 w-full rounded-lg border border-border bg-card px-2 text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring",
-                            !r.line && "cursor-not-allowed opacity-50"
-                          )}
-                        >
-                          <option value="">{r.line ? "Sélectionner un produit" : "Choisir une ligne d&apos;abord"}</option>
-                          {availableProducts.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                            </option>
-                          ))}
-                        </select>
-                        {product && (
-                          <span className="mt-1 block text-[10px] text-muted-foreground">
-                            Lignes autorisées : {product.allowedLines.join(", ")}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        <span className="inline-flex rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
-                          {UNIT_LABELS[r.unit]}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2">
-                        <NumInput value={r.target} onChange={(v) => updateRow(r.id, { target: v })} />
-                      </td>
-                      <td className="px-3 py-2">
-                        <NumInput value={r.produced} onChange={(v) => updateRow(r.id, { produced: v })} />
-                      </td>
-                      <td className="px-3 py-2">
-                        <NumInput value={r.conforme} onChange={(v) => updateRow(r.id, { conforme: v })} />
-                      </td>
-                      <td className="px-3 py-2">
-                        <NumInput value={r.rejete} onChange={(v) => updateRow(r.id, { rejete: v })} />
-                      </td>
-                      <td className={cn("px-3 py-2 text-right whitespace-nowrap font-medium", ecartColor)}>
-                        {ecart >= 0 ? "+" : ""}
-                        {formatNumber(ecart, 1)} <span className="text-muted-foreground font-normal">{UNIT_LABELS[r.unit]}</span>
-                      </td>
-                      <td className="px-3 py-2">
-                        <span
-                          className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-semibold"
-                          style={{ backgroundColor: `${rColor}15`, color: rColor }}
-                        >
-                          {rateBadge(rate)}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2">
-                        <input
-                          type="time"
-                          value={r.heureDebut}
-                          onChange={(e) => updateRow(r.id, { heureDebut: e.target.value })}
-                          className="h-9 w-full rounded-lg border border-border bg-card px-1 text-xs text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                        />
-                      </td>
-                      <td className="px-3 py-2">
-                        <input
-                          type="time"
-                          value={r.heureFin}
-                          onChange={(e) => updateRow(r.id, { heureFin: e.target.value })}
-                          className="h-9 w-full rounded-lg border border-border bg-card px-1 text-xs text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                        />
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <button
-                          onClick={() => removeRow(r.id)}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-error/10 hover:text-error disabled:opacity-30"
-                          aria-label="Supprimer la ligne"
-                          title="Supprimer"
-                          disabled={rows.length === 1}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </td>
+      {/* Section 2: Production entries — two independent shift tables */}
+      {SHIFT_TABLES.map((table) => {
+        const key = table.key;
+        const rows = rowsFor(key);
+        const sum = key === "A" ? summaryA : summaryB;
+        const validCount = key === "A" ? validA : validB;
+        const Icon = table.icon;
+        return (
+          <Card key={key} className="animate-fade-in">
+            <CardHeader>
+              <div className="flex flex-row items-center justify-between gap-4">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Icon className="h-4 w-4 text-secondary" /> {table.label} — Saisie de la production
+                  </CardTitle>
+                  <CardDescription>
+                    {table.start} – {table.end} · Sélectionnez une ligne puis un produit compatible. Une ligne peut apparaître plusieurs fois.
+                  </CardDescription>
+                </div>
+                <div className="hidden items-center gap-2 sm:flex">
+                  <Badge variant="default">{validCount} séquence{validCount > 1 ? "s" : ""}</Badge>
+                  <Badge variant="neutral">{sum.linesUsed} ligne{sum.linesUsed > 1 ? "s" : ""}</Badge>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="px-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm min-w-[900px]">
+                  <thead>
+                    <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                      <th className="px-3 py-3 font-medium w-[90px]">Ligne</th>
+                      <th className="px-3 py-3 font-medium min-w-[220px]">Produit</th>
+                      <th className="px-3 py-3 font-medium w-[70px]">Unité</th>
+                      <th className="px-3 py-3 text-right font-medium w-[100px]">Qté cible</th>
+                      <th className="px-3 py-3 text-right font-medium w-[100px]">Qté réalisée</th>
+                      <th className="px-3 py-3 text-right font-medium w-[100px]">Conforme</th>
+                      <th className="px-3 py-3 text-right font-medium w-[100px]">Rejetée</th>
+                      <th className="px-3 py-3 text-right font-medium w-[110px]">Écart</th>
+                      <th className="px-3 py-3 font-medium w-[80px]">Taux</th>
+                      <th className="px-3 py-3 font-medium w-[44px]" />
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                  </thead>
+                  <tbody>
+                    {rows.map((r) => {
+                      const ecart = r.produced - r.target;
+                      const rate = rateOf(r.target, r.produced);
+                      const rColor = rateColor(rate);
+                      const ecartColor = ecart >= 0 ? "text-accent" : "text-error";
+                      const availableProducts = r.line ? productsForLine(r.line) : [];
+                      const product = r.productId ? getProductById(r.productId) : undefined;
+                      return (
+                        <tr key={r.id} className="border-b border-border/50 align-middle hover:bg-muted/40">
+                          <td className="px-3 py-2">
+                            <select
+                              value={r.line}
+                              onChange={(e) => changeLine(key, r.id, e.target.value as ProductionLine)}
+                              className="h-9 w-full rounded-lg border border-border bg-card px-2 text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                            >
+                              <option value="">—</option>
+                              {PRODUCTION_LINES.map((l) => (
+                                <option key={l} value={l}>
+                                  {l}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-3 py-2">
+                            <select
+                              value={r.productId}
+                              disabled={!r.line}
+                              onChange={(e) => changeProduct(key, r.id, e.target.value)}
+                              className={cn(
+                                "h-9 w-full rounded-lg border border-border bg-card px-2 text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring",
+                                !r.line && "cursor-not-allowed opacity-50"
+                              )}
+                            >
+                              <option value="">{r.line ? "Sélectionner un produit" : "Choisir une ligne d&apos;abord"}</option>
+                              {availableProducts.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.name}
+                                </option>
+                              ))}
+                            </select>
+                            {product && (
+                              <span className="mt-1 block text-[10px] text-muted-foreground">
+                                Lignes autorisées : {product.allowedLines.join(", ")}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span className="inline-flex rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
+                              {UNIT_LABELS[r.unit]}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2">
+                            <NumInput value={r.target} onChange={(v) => updateRow(key, r.id, { target: v })} />
+                          </td>
+                          <td className="px-3 py-2">
+                            <NumInput value={r.produced} onChange={(v) => updateRow(key, r.id, { produced: v })} />
+                          </td>
+                          <td className="px-3 py-2">
+                            <NumInput value={r.conforme} onChange={(v) => updateRow(key, r.id, { conforme: v })} />
+                          </td>
+                          <td className="px-3 py-2">
+                            <NumInput value={r.rejete} onChange={(v) => updateRow(key, r.id, { rejete: v })} />
+                          </td>
+                          <td className={cn("px-3 py-2 text-right whitespace-nowrap font-medium", ecartColor)}>
+                            {ecart >= 0 ? "+" : ""}
+                            {formatNumber(ecart, 1)} <span className="text-muted-foreground font-normal">{UNIT_LABELS[r.unit]}</span>
+                          </td>
+                          <td className="px-3 py-2">
+                            <span
+                              className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-semibold"
+                              style={{ backgroundColor: `${rColor}15`, color: rColor }}
+                            >
+                              {rateBadge(rate)}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <button
+                              onClick={() => removeRow(key, r.id)}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-error/10 hover:text-error disabled:opacity-30"
+                              aria-label="Supprimer la ligne"
+                              title="Supprimer"
+                              disabled={rows.length === 1}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-4">
-            <p className="text-xs text-muted-foreground">
-              <span className="font-medium text-foreground">{validSequences}</span> séquence(s) validée(s) · {rows.length - validSequences} incomplète(s)
-            </p>
-            <Button variant="outline" size="sm" onClick={addRow}>
-              <Plus className="h-4 w-4" /> Ajouter une ligne
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+              <div className="px-5 pt-4">
+                <Button variant="secondary" size="sm" onClick={() => addRow(key)}>
+                  <Plus className="h-4 w-4" /> Ajouter un produit
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })}
 
       {/* Visual summary */}
       <Card className="animate-fade-in border-secondary/30 bg-gradient-to-r from-secondary/5 to-transparent">
@@ -423,7 +432,7 @@ export default function NouvelleSaisiePage() {
             <SummaryStat
               icon={Layers}
               color="#2563eb"
-              label="Séquences saisies"
+              label="Séquences saisies (A + B)"
               value={String(summary.sequences)}
             />
             <SummaryStat
@@ -444,6 +453,12 @@ export default function NouvelleSaisiePage() {
               label="Amplitude shift"
               value={shiftDuration(heureDebut, heureFin)}
             />
+          </div>
+
+          {/* Per-shift mini summary */}
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <ShiftMiniSummary label="Shift A" sequences={summaryA.sequences} linesUsed={summaryA.linesUsed} />
+            <ShiftMiniSummary label="Shift B" sequences={summaryB.sequences} linesUsed={summaryB.linesUsed} />
           </div>
 
           {/* Per-unit breakdown */}
@@ -560,6 +575,19 @@ function SummaryStat({
       <div className="min-w-0">
         <p className="text-xs text-muted-foreground">{label}</p>
         <p className="mt-0.5 text-lg font-bold text-foreground">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+function ShiftMiniSummary({ label, sequences, linesUsed }: { label: string; sequences: number; linesUsed: number }) {
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3">
+      <span className="text-sm font-medium text-foreground">{label}</span>
+      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+        <span><span className="font-medium text-foreground">{sequences}</span> séquence{sequences > 1 ? "s" : ""}</span>
+        <span className="text-border">|</span>
+        <span><span className="font-medium text-foreground">{linesUsed}</span> ligne{linesUsed > 1 ? "s" : ""}</span>
       </div>
     </div>
   );

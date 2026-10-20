@@ -1,20 +1,7 @@
 "use client";
 
 import { useMemo, useState, useId } from "react";
-import {
-  Plus,
-  Trash2,
-  Package,
-  Target,
-  Percent,
-  CircleAlert,
-  FileCheck2,
-  Clock,
-  Factory,
-  ClipboardList,
-  Save,
-  Info,
-} from "lucide-react";
+import { Plus, Trash as Trash2, Package, Target, Percent, CircleAlert, FileCheck as FileCheck2, Clock, Factory, ClipboardList, Save, Info } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";

@@ -33,6 +33,7 @@ import {
   formatUnitValue,
 } from "@/lib/kpis";
 import { toISODate, addDays, formatDateShort, cn } from "@/lib/utils";
+import Image from "next/image";
 import Link from "next/link";
 import type { ReportStatus } from "@/lib/types";
 
@@ -95,6 +96,22 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
+      <section className="relative overflow-hidden rounded-xl border border-[#f3b400]/40 bg-[#fff9e8] shadow-sm animate-fade-in">
+        <div className="absolute inset-y-0 left-0 w-2 bg-[#ed1c24]" />
+        <div className="flex flex-col items-start gap-4 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+          <div className="flex items-center gap-4">
+            <div className="relative h-16 w-40 shrink-0 overflow-hidden rounded-lg border border-[#f3b400]/50 bg-white shadow-sm sm:h-20 sm:w-52">
+              <Image src="/images.jpg" alt="Logo La Bergère" fill priority sizes="(max-width: 640px) 160px, 208px" className="object-contain" />
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#9b6b00]">La Bergère SPA</p>
+              <h1 className="mt-1 text-xl font-bold text-[#182433] sm:text-2xl">Unité de production sauce</h1>
+              <p className="mt-1 text-sm text-[#5f6670]">Pilotage quotidien de votre production</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* Filters bar */}
       <Card className="animate-fade-in">
         <CardContent className="pt-5">

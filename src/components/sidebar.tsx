@@ -3,7 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronLeft, Factory } from "lucide-react";
+import Image from "next/image";
+import { ChevronLeft } from "lucide-react";
 import { NAV_ITEMS } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 
@@ -24,8 +25,8 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
     >
       {/* Logo */}
       <div className="flex h-16 items-center gap-3 border-b border-white/10 px-4">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary text-white">
-          <Factory className="h-5 w-5" />
+        <div className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white">
+          <Image src="/images.jpg" alt="La Bergère" fill sizes="36px" className="object-cover" />
         </div>
         {!collapsed && (
           <div className="overflow-hidden animate-slide-in">

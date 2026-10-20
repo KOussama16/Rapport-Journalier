@@ -1,12 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Plus, Trash as Trash2, Package, Target, Percent, FileCheck as FileCheck2, Clock, Factory, Save, Info, Layers, Sunrise, Sunset, Calendar, TrendingDown, TriangleAlert as AlertTriangle, Wrench } from "lucide-react";
+import { useMemo, useState, useCallback } from "react";
+import { Plus, Trash as Trash2, Package, Target, Percent, FileCheck as FileCheck2, Clock, Factory, Save, Info, Layers, Sunrise, Sunset, Calendar, TrendingDown, TriangleAlert as AlertTriangle, Wrench, Printer, Eye } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { Unit } from "@/lib/types";
 import { cn, toISODate, formatNumber } from "@/lib/utils";
+import { PrintPreviewModal } from "@/components/print-preview-modal";
+import type { PrintableReportData } from "@/lib/print-report-types";
 import {
   PRODUCTION_LINES,
   getProductById,
@@ -197,6 +199,14 @@ export default function NouvelleSaisiePage() {
   const [stops, setStops] = useState<StopRow[]>([makeStop()]);
   const [incidents, setIncidents] = useState<IncidentRow[]>([makeIncident()]);
 
+  // Informations complémentaires pour le rapport imprimable
+  const [operator, setOperator] = useState("");
+  const [reportStatus, setReportStatus] = useState<"en attente" | "validé" | "rejeté">("en attente");
+  const [observations, setObservations] = useState("");
+
+  // Aperçu / impression
+  const [printData, setPrintData] = useState<PrintableReportData | null>(null);
+
   // Date is auto-filled with today's date (JJ/MM/AAAA).
   const dateDisplay = new Intl.DateTimeFormat("fr-FR", {
     day: "2-digit",
@@ -363,6 +373,91 @@ export default function NouvelleSaisiePage() {
     return { count: incidents.length, critical, open };
   }, [incidents]);
 
+  const buildPrintData = useCallback((): PrintableReportData => {
+    const reportId = `RPT-${today}`;
+    const shiftData = SHIFT_TABLES.map((t) => {
+      const rows = rowsFor(t.key)
+        .filter((r) => r.productId)
+        .map((r) => {
+          const product = getProductById(r.productId);
+          return {
+            line: r.line,
+            productId: r.productId,
+            productName: product?.name ?? r.productId,
+            unit: r.unit,
+            target: r.target,
+            produced: r.produced,
+            conforme: r.conforme,
+            rejete: r.rejete,
+          };
+        });
+      return { key: t.key, label: t.label, start: t.start, end: t.end, rows };
+    });
+
+    const printLosses = losses
+      .filter((l) => l.productId)
+      .map((l) => {
+        const product = getProductById(l.productId);
+        return {
+          shift: l.shift,
+          line: l.line,
+          productName: product?.name ?? l.productId,
+          unit: product?.unit ?? ("unité" as Unit),
+          quantity: l.quantity,
+          cause: l.cause,
+          comment: l.comment,
+        };
+      });
+
+    const printStops = stops
+      .filter((s) => s.startTime && s.endTime)
+      .map((s) => ({
+        shift: s.shift,
+        equipment: s.equipment,
+        motif: s.motif,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        durationMinutes: stopDurationMinutes(s.startTime, s.endTime),
+        description: s.description,
+        intervention: s.intervention,
+        status: s.status,
+      }));
+
+    const printIncidents = incidents.map((i) => {
+      const product = i.productId ? getProductById(i.productId) : undefined;
+      return {
+        shift: i.shift,
+        line: i.line,
+        productName: product?.name ?? i.productId ?? "—",
+        unit: product?.unit ?? ("unité" as Unit),
+        type: i.type,
+        description: i.description,
+        severity: i.severity,
+        quantity: i.quantity,
+        responsible: i.responsible,
+        action: i.action,
+        status: i.status,
+      };
+    });
+
+    return {
+      reportId,
+      date: today,
+      dateDisplay,
+      status: reportStatus,
+      operator,
+      observations,
+      shifts: shiftData,
+      losses: printLosses,
+      stops: printStops,
+      incidents: printIncidents,
+    };
+  }, [rowsA, rowsB, losses, stops, incidents, operator, reportStatus, observations, today, dateDisplay]);
+
+  function openPrintPreview() {
+    setPrintData(buildPrintData());
+  }
+
   return (
     <div className="space-y-6">
       {/* Page intro */}
@@ -393,6 +488,61 @@ export default function NouvelleSaisiePage() {
             <div>
               <p className="text-lg font-bold text-foreground">{dateDisplay}</p>
               <p className="text-xs text-muted-foreground">Date du jour, renseignée automatiquement</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Section: Informations du rapport (opérateur, statut, observations) */}
+      <Card className="animate-fade-in">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileCheck2 className="h-4 w-4 text-secondary" /> Informations du rapport
+          </CardTitle>
+          <CardDescription>Opérateur, statut et observations générales — utilisés pour l&apos;impression du rapport.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="report-operator" className="text-xs font-medium text-muted-foreground">
+                Opérateur
+              </label>
+              <input
+                type="text"
+                id="report-operator"
+                value={operator}
+                onChange={(e) => setOperator(e.target.value)}
+                placeholder="Nom de l&apos;opérateur"
+                className="h-9 rounded-lg border border-border bg-card px-3 text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="report-status" className="text-xs font-medium text-muted-foreground">
+                Statut du rapport
+              </label>
+              <select
+                id="report-status"
+                value={reportStatus}
+                onChange={(e) => setReportStatus(e.target.value as "en attente" | "validé" | "rejeté")}
+                className="h-9 rounded-lg border border-border bg-card px-3 text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                <option value="en attente">En attente</option>
+                <option value="validé">Validé</option>
+                <option value="rejeté">Rejeté</option>
+              </select>
+            </div>
+            <div className="flex flex-col gap-1.5 sm:col-span-2">
+              <label htmlFor="report-observations" className="text-xs font-medium text-muted-foreground">
+                Observations générales
+              </label>
+              <textarea
+                id="report-observations"
+                value={observations}
+                onChange={(e) => setObservations(e.target.value)}
+                placeholder="Remarques, contexte, événements particuliers de la journée…"
+                rows={3}
+                className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring resize-y"
+              />
             </div>
           </div>
         </CardContent>
@@ -1021,6 +1171,14 @@ export default function NouvelleSaisiePage() {
           </span>
         )}
         <Button
+          variant="outline"
+          size="lg"
+          disabled={!generalValid || validSequences === 0}
+          onClick={openPrintPreview}
+        >
+          <Eye className="h-4 w-4" /> Aperçu / Imprimer PDF
+        </Button>
+        <Button
           variant="secondary"
           size="lg"
           disabled={!generalValid || validSequences === 0}
@@ -1029,6 +1187,9 @@ export default function NouvelleSaisiePage() {
           <Save className="h-4 w-4" /> Enregistrer l&apos;étape 1
         </Button>
       </div>
+
+      {/* Modal d'aperçu / impression */}
+      <PrintPreviewModal data={printData} onClose={() => setPrintData(null)} />
     </div>
   );
 }

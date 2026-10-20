@@ -1,16 +1,4 @@
-import {
-  LayoutDashboard,
-  FileText,
-  FilePlus2,
-  History,
-  Package,
-  Boxes,
-  AlertTriangle,
-  Wrench,
-  Users,
-  BarChart3,
-  Settings,
-} from "lucide-react";
+import { LayoutDashboard, FileText, FilePlus as FilePlus2, Factory as History, Package, Boxes, TriangleAlert as AlertTriangle, Wrench, Users, ChartBar as BarChart3, Settings } from "lucide-react";
 
 export interface NavItem {
   label: string;

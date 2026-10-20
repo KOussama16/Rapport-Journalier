@@ -1,17 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import {
-  Package,
-  Target,
-  Percent,
-  TrendingDown,
-  Clock,
-  AlertTriangle,
-  FileCheck2,
-  FileClock,
-  ArrowRight,
-} from "lucide-react";
+import { Package, Target, Percent, TrendingDown, Clock, TriangleAlert as AlertTriangle, FileCheck as FileCheck2, FileClock, ArrowRight } from "lucide-react";
 import {
   BarChart,
   Bar,

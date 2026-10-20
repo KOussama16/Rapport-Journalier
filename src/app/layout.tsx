@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   title: "Rapport Unité de Production Sauce — La Bergère SPA",
   description: "Pilotage quotidien de l'unité industrielle de production de sauces agroalimentaires",
 };
-
+//comment
 export default function RootLayout({
   children,
 }: {

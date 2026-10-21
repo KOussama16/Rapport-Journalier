@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
-import { Plus, Trash as Trash2, Package, Target, Percent, FileCheck as FileCheck2, Clock, Factory, Save, Info, Layers, Sunrise, Sunset, Calendar, TrendingDown, TriangleAlert as AlertTriangle, Wrench, Printer, Eye, ClipboardList, CheckCircle2, Pencil } from "lucide-react";
+import { Plus, Trash as Trash2, Package, Target, Percent, FileCheck as FileCheck2, Clock, Factory, Save, Info, Layers, Sunrise, Sunset, Calendar, TrendingDown, TriangleAlert as AlertTriangle, Wrench, Printer, Eye, ClipboardList, CircleCheck as CheckCircle2, Pencil } from "lucide-react";
 import { PRODUCT_REFERENTIAL } from "@/lib/production-referential";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";

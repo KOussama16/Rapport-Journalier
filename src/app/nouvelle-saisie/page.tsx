@@ -687,7 +687,6 @@ export default function NouvelleSaisiePage() {
             </div>
             <div>
               <p className="text-lg font-bold text-foreground">{dateDisplay}</p>
-              <p className="text-xs text-muted-foreground">Date du jour, renseignée automatiquement</p>
             </div>
           </div>
         </CardContent>
@@ -702,7 +701,7 @@ export default function NouvelleSaisiePage() {
                 <ClipboardList className="h-4 w-4 text-secondary" /> Planification de production — Objectifs communiqués par la Direction Générale
               </CardTitle>
               <CardDescription>
-                Saisissez le planning journalier communiqué par la DG. Après enregistrement, les objectifs planifiés sont automatiquement repris dans les sections Shift A et Shift B pour comparaison avec la production réelle.
+                Saisissez le planning journalier communiqué par la DG.
               </CardDescription>
             </div>
             <div className="hidden items-center gap-2 sm:flex">
@@ -727,13 +726,11 @@ export default function NouvelleSaisiePage() {
                   </Button>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm min-w-[640px]">
+                  <table className="w-full text-sm min-w-[480px]">
                     <thead>
                       <tr className="border-b border-border text-left text-xs text-muted-foreground">
                         <th className="px-3 py-2 font-medium">Produit</th>
-                        <th className="px-3 py-2 font-medium w-[90px]">Ligne</th>
                         <th className="px-3 py-2 text-right font-medium w-[120px]">Qté planifiée</th>
-                        <th className="px-3 py-2 font-medium w-[70px]">Unité</th>
                         <th className="px-3 py-2 font-medium">Observations</th>
                       </tr>
                     </thead>
@@ -743,9 +740,7 @@ export default function NouvelleSaisiePage() {
                         return (
                           <tr key={r.id} className="border-b border-border/50">
                             <td className="px-3 py-2 font-medium">{product?.name ?? r.productId}</td>
-                            <td className="px-3 py-2">{r.line || "—"}</td>
                             <td className="px-3 py-2 text-right font-semibold">{formatNumber(r.plannedQty, 1)}</td>
-                            <td className="px-3 py-2">{UNIT_LABELS[r.unit]}</td>
                             <td className="px-3 py-2 text-muted-foreground">{r.observations || "—"}</td>
                           </tr>
                         );
@@ -758,13 +753,11 @@ export default function NouvelleSaisiePage() {
           ) : (
             <>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[760px]">
+                <table className="w-full text-sm min-w-[560px]">
                   <thead>
                     <tr className="border-b border-border text-left text-xs text-muted-foreground">
                       <th className="px-3 py-3 font-medium min-w-[220px]">Produit</th>
-                      <th className="px-3 py-3 font-medium w-[90px]">Ligne</th>
                       <th className="px-3 py-3 text-right font-medium w-[120px]">Qté planifiée</th>
-                      <th className="px-3 py-3 font-medium w-[70px]">Unité</th>
                       <th className="px-3 py-3 font-medium min-w-[180px]">Observations</th>
                       <th className="px-3 py-3 font-medium w-[44px]" />
                     </tr>
@@ -793,18 +786,6 @@ export default function NouvelleSaisiePage() {
                             )}
                           </td>
                           <td className="px-3 py-2">
-                            <select
-                              value={r.line}
-                              onChange={(e) => changePlanningLine(r.id, e.target.value as ProductionLine)}
-                              className={selCls}
-                            >
-                              <option value="">—</option>
-                              {PRODUCTION_LINES.map((l) => (
-                                <option key={l} value={l}>{l}</option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="px-3 py-2">
                             <input
                               type="number"
                               min={0}
@@ -814,11 +795,6 @@ export default function NouvelleSaisiePage() {
                               onChange={(e) => updatePlanningRow(r.id, { plannedQty: clampNonNeg(e.target.value) })}
                               className="h-9 w-full rounded-lg border border-border bg-card px-2 text-right text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
                             />
-                          </td>
-                          <td className="px-3 py-2">
-                            <span className="inline-flex rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
-                              {UNIT_LABELS[r.unit]}
-                            </span>
                           </td>
                           <td className="px-3 py-2">
                             <input
@@ -879,7 +855,7 @@ export default function NouvelleSaisiePage() {
                     <Icon className="h-4 w-4 text-secondary" /> {table.label} — Saisie de la production
                   </CardTitle>
                   <CardDescription>
-                    {table.start} – {table.end} · Sélectionnez une ligne puis un produit compatible. Une ligne peut apparaître plusieurs fois.
+                    {table.start} – {table.end} · Sélectionnez une ligne puis un produit compatible.
                   </CardDescription>
                 </div>
                 <div className="hidden items-center gap-2 sm:flex">
@@ -890,12 +866,11 @@ export default function NouvelleSaisiePage() {
             </CardHeader>
             <CardContent className="px-0">
               <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[900px]">
+                <table className="w-full text-sm min-w-[830px]">
                   <thead>
                     <tr className="border-b border-border text-left text-xs text-muted-foreground">
                       <th className="px-3 py-3 font-medium w-[90px]">Ligne</th>
                       <th className="px-3 py-3 font-medium min-w-[220px]">Produit</th>
-                      <th className="px-3 py-3 font-medium w-[70px]">Unité</th>
                       <th className="px-3 py-3 text-right font-medium w-[100px]">Qté cible</th>
                       <th className="px-3 py-3 text-right font-medium w-[100px]">Qté réalisée</th>
                       <th className="px-3 py-3 text-right font-medium w-[100px]">Conforme</th>
@@ -951,11 +926,6 @@ export default function NouvelleSaisiePage() {
                                 Lignes autorisées : {product.allowedLines.join(", ")}
                               </span>
                             )}
-                          </td>
-                          <td className="px-3 py-2">
-                            <span className="inline-flex rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
-                              {UNIT_LABELS[r.unit]}
-                            </span>
                           </td>
                           <td className="px-3 py-2">
                             <NumInput value={r.target} onChange={(v) => updateRow(key, r.id, { target: v })} />

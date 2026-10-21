@@ -387,6 +387,56 @@ body {
     min-height: 40px;
   }
 
+  /* --- Mention d'élaboration (Directeur d'Unité de Production) --- */
+  .print-elaboration {
+    margin-top: 18px;
+    margin-bottom: 12px;
+    padding: 10px 14px;
+    border: 1px solid #d1d5db;
+    border-left: 4px solid #ed1c24;
+    border-radius: 4px;
+    page-break-inside: avoid;
+  }
+
+  .print-elaboration-label {
+    font-size: 9pt;
+    color: #6b7280;
+    margin: 0 0 4px 0;
+  }
+
+  .print-elaboration-name {
+    font-size: 11.5pt;
+    font-weight: 700;
+    color: #182433;
+    margin: 0;
+  }
+
+  .print-elaboration-role {
+    font-size: 9.5pt;
+    font-weight: 600;
+    color: #2563eb;
+    margin: 2px 0 0 0;
+  }
+
+  .print-elaboration-company {
+    font-size: 9pt;
+    color: #4b5563;
+    margin: 1px 0 0 0;
+  }
+
+  .print-elaboration-sign-label {
+    font-size: 8.5pt;
+    color: #6b7280;
+    margin: 10px 0 4px 0;
+  }
+
+  .print-elaboration-signbox {
+    width: 70mm;
+    height: 18mm;
+    border: 1px dashed #9ca3af;
+    border-radius: 3px;
+  }
+
   /* --- Signatures --- */
   .print-signatures {
     display: grid;

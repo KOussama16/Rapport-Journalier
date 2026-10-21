@@ -693,61 +693,6 @@ export default function NouvelleSaisiePage() {
         </CardContent>
       </Card>
 
-      {/* Section: Informations du rapport (opérateur, statut, observations) */}
-      <Card className="animate-fade-in">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FileCheck2 className="h-4 w-4 text-secondary" /> Informations du rapport
-          </CardTitle>
-          <CardDescription>Opérateur, statut et observations générales — utilisés pour l&apos;impression du rapport.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="report-operator" className="text-xs font-medium text-muted-foreground">
-                Opérateur
-              </label>
-              <input
-                type="text"
-                id="report-operator"
-                value={operator}
-                onChange={(e) => setOperator(e.target.value)}
-                placeholder="Nom de l&apos;opérateur"
-                className="h-9 rounded-lg border border-border bg-card px-3 text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="report-status" className="text-xs font-medium text-muted-foreground">
-                Statut du rapport
-              </label>
-              <select
-                id="report-status"
-                value={reportStatus}
-                onChange={(e) => setReportStatus(e.target.value as "en attente" | "validé" | "rejeté")}
-                className="h-9 rounded-lg border border-border bg-card px-3 text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-              >
-                <option value="en attente">En attente</option>
-                <option value="validé">Validé</option>
-                <option value="rejeté">Rejeté</option>
-              </select>
-            </div>
-            <div className="flex flex-col gap-1.5 sm:col-span-2">
-              <label htmlFor="report-observations" className="text-xs font-medium text-muted-foreground">
-                Observations générales
-              </label>
-              <textarea
-                id="report-observations"
-                value={observations}
-                onChange={(e) => setObservations(e.target.value)}
-                placeholder="Remarques, contexte, événements particuliers de la journée…"
-                rows={3}
-                className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring resize-y"
-              />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
       {/* Section: Planification de production — Objectifs Direction Générale */}
       <Card className="animate-fade-in border-secondary/30">
         <CardHeader>

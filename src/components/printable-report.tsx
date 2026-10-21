@@ -456,6 +456,16 @@ export function PrintableReport({ data }: PrintableReportProps) {
         </section>
       )}
 
+      {/* Mention d'élaboration par le Directeur d'Unité de Production */}
+      <section className="print-section print-elaboration">
+        <p className="print-elaboration-label">Rapport élaboré par :</p>
+        <div className="print-elaboration-name">M. KACIMI Oussama</div>
+        <div className="print-elaboration-role">Directeur d&apos;Unité de Production</div>
+        <div className="print-elaboration-company">La Bergère SPA</div>
+        <div className="print-elaboration-sign-label">Signature :</div>
+        <div className="print-elaboration-signbox" />
+      </section>
+
       {/* Espaces de signature */}
       <section className="print-signatures">
         <div className="print-sign-block">

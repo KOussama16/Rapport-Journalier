@@ -346,54 +346,117 @@ export default function NouvelleSaisiePage() {
     setPlanningRows(validRows.map((r) => ({ ...r })));
     setPlanningSaved(true);
     setPlanningEditLocked(true);
-    // Répartir automatiquement les objectifs entre les shifts
-    distributeTargetsFromPlanning(validRows);
   }
 
-  function distributeTargetsFromPlanning(planRows: PlanningRow[]) {
-    const productsA = planRows.filter((p) => p.shifts.includes("A"));
-    const productsB = planRows.filter((p) => p.shifts.includes("B"));
-
-    setRowsA((prev) => syncShiftRows(prev, productsA, planRows));
-    setRowsB((prev) => syncShiftRows(prev, productsB, planRows));
-  }
-
-  function syncShiftRows(
-    prevRows: ProductionRow[],
-    shiftPlanRows: PlanningRow[],
-    allPlanRows: PlanningRow[]
-  ): ProductionRow[] {
-    const result = [...prevRows];
-    for (const p of shiftPlanRows) {
-      const target = computeShiftTarget(p, allPlanRows);
-      const match = result.find(
-        (r) => r.productId === p.productId && (p.line === "" || r.line === p.line)
-      );
-      if (match) {
-        match.target = target;
-        if (p.line) match.line = p.line;
-      } else {
-        result.push({
-          id: `row-${++rowSeq}`,
-          line: p.line || "",
-          productId: p.productId,
-          unit: p.unit,
-          target,
-          produced: 0,
-          conforme: 0,
-          rejete: 0,
-        });
+  // --- Source unique de vérité pour la répartition des cibles ---
+  // Map: productId -> objectif journalier global (première occurrence trouvée dans le planning)
+  const dailyObjectiveMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of planningRows) {
+      if (!r.productId || r.plannedQty <= 0) continue;
+      if (!map.has(r.productId)) {
+        map.set(r.productId, r.plannedQty);
       }
     }
-    return result;
+    return map;
+  }, [planningRows]);
+
+  // Map: productId -> liste des shifts où il est planifié (déduit des données de planification)
+  const productShiftMap = useMemo(() => {
+    const map = new Map<string, Set<ShiftKey>>();
+    for (const r of planningRows) {
+      if (!r.productId || r.plannedQty <= 0) continue;
+      if (!map.has(r.productId)) map.set(r.productId, new Set());
+      for (const s of r.shifts) {
+        map.get(r.productId)!.add(s);
+      }
+    }
+    return map;
+  }, [planningRows]);
+
+  // Calculer la cible d'un produit pour un shift donné
+  function targetForShift(productId: string, shift: ShiftKey): number {
+    const daily = dailyObjectiveMap.get(productId);
+    if (daily === undefined) return 0;
+    const shifts = productShiftMap.get(productId);
+    if (!shifts || !shifts.has(shift)) return 0;
+    const inBoth = shifts.has("A") && shifts.has("B");
+    return inBoth ? Math.round(daily / 2) : daily;
   }
 
-  function computeShiftTarget(planRow: PlanningRow, allPlanRows: PlanningRow[]): number {
-    const inBothShifts = planRow.shifts.includes("A") && planRow.shifts.includes("B");
-    if (inBothShifts) {
-      return Math.round(planRow.plannedQty / 2);
+  // Recalculer automatiquement les cibles des shifts quand le planning change
+  useEffect(() => {
+    setRowsA((prev) => syncShiftTargets(prev, "A"));
+    setRowsB((prev) => syncShiftTargets(prev, "B"));
+  }, [dailyObjectiveMap, productShiftMap]);
+
+  function syncShiftTargets(prevRows: ProductionRow[], shift: ShiftKey): ProductionRow[] {
+    // Produits planifiés pour ce shift
+    const plannedForShift = new Set<string>();
+    for (const [pid, shifts] of productShiftMap) {
+      if (shifts.has(shift)) plannedForShift.add(pid);
     }
-    return planRow.plannedQty;
+
+    // Lignes de planification pour ce shift (pour récupérer la ligne de production)
+    const planLineForProduct = new Map<string, ProductionLine | "">();
+    for (const r of planningRows) {
+      if (!r.productId || r.plannedQty <= 0) continue;
+      if (r.shifts.includes(shift) && !planLineForProduct.has(r.productId)) {
+        planLineForProduct.set(r.productId, r.line);
+      }
+    }
+
+    const result: ProductionRow[] = [];
+    const seenProducts = new Set<string>();
+
+    // 1. Mettre à jour les lignes existantes qui correspondent à un produit planifié
+    for (const r of prevRows) {
+      if (r.productId && plannedForShift.has(r.productId) && !seenProducts.has(r.productId)) {
+        const newTarget = targetForShift(r.productId, shift);
+        const planLine = planLineForProduct.get(r.productId);
+        seenProducts.add(r.productId);
+        result.push({
+          ...r,
+          target: newTarget,
+          line: planLine ?? r.line,
+        });
+      } else if (r.productId && !plannedForShift.has(r.productId)) {
+        // Produit retiré de ce shift: remettre la cible à 0 (garder la ligne pour ne pas perdre la saisie)
+        result.push({ ...r, target: 0 });
+      } else if (!r.productId) {
+        // Ligne vide: la conserver telle quelle
+        result.push({ ...r });
+      } else if (seenProducts.has(r.productId)) {
+        // Doublon du même produit sur ce shift: cible à 0 (la répartition ne s'applique qu'une fois)
+        result.push({ ...r, target: 0 });
+      }
+    }
+
+    // 2. Ajouter les produits planifiés mais pas encore présents dans les lignes
+    for (const pid of plannedForShift) {
+      if (seenProducts.has(pid)) continue;
+      const product = getProductById(pid);
+      if (!product) continue;
+      const newTarget = targetForShift(pid, shift);
+      const planLine = planLineForProduct.get(pid) ?? product.allowedLines[0] ?? "";
+      result.push({
+        id: `row-${++rowSeq}`,
+        line: planLine,
+        productId: pid,
+        unit: product.unit,
+        target: newTarget,
+        produced: 0,
+        conforme: 0,
+        rejete: 0,
+      });
+    }
+
+    // Toujours garder au moins une ligne vide
+    if (result.length === 0) {
+      result.push(makeRow());
+    }
+
+    return result;
   }
 
   // Planning vs actual comparison
@@ -490,7 +553,10 @@ export default function NouvelleSaisiePage() {
       updateRow(key, id, { productId: "", unit: "unité", target: 0 });
       return;
     }
-    updateRow(key, id, { productId, unit: product.unit, target: product.defaultTarget });
+    // Utiliser la cible calculée depuis la planification si le produit y est présent
+    const plannedTarget = targetForShift(productId, key);
+    const target = plannedTarget > 0 ? plannedTarget : product.defaultTarget;
+    updateRow(key, id, { productId, unit: product.unit, target });
   }
 
   function addRow(key: ShiftKey) {

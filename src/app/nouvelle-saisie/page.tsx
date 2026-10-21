@@ -177,6 +177,7 @@ interface PlanningRow {
   plannedQty: number;
   unit: Unit;
   observations: string;
+  shifts: ShiftKey[];
 }
 
 let planSeq = 0;
@@ -188,6 +189,7 @@ function makePlanningRow(): PlanningRow {
     plannedQty: 0,
     unit: "unité",
     observations: "",
+    shifts: ["A"],
   };
 }
 
@@ -255,7 +257,7 @@ export default function NouvelleSaisiePage() {
             const num = parseInt(r.id.replace("plan-", ""), 10);
             if (!isNaN(num) && num > planSeq) planSeq = num;
           }
-          setPlanningRows(parsed.rows.map((r) => ({ ...r })));
+          setPlanningRows(parsed.rows.map((r) => ({ ...r, shifts: r.shifts ?? ["A"] })));
           setPlanningSaved(true);
           setPlanningEditLocked(true);
           return;
@@ -317,6 +319,17 @@ export default function NouvelleSaisiePage() {
     setPlanningSaved(false);
   }
 
+  function togglePlanningShift(id: string, shift: ShiftKey) {
+    setPlanningRows((prev) => prev.map((r) => {
+      if (r.id !== id) return r;
+      const has = r.shifts.includes(shift);
+      const newShifts = has ? r.shifts.filter((s) => s !== shift) : [...r.shifts, shift];
+      // Garder au moins un shift sélectionné
+      return { ...r, shifts: newShifts.length > 0 ? newShifts : [shift] };
+    }));
+    setPlanningSaved(false);
+  }
+
   function savePlanning() {
     const validRows = planningRows.filter((r) => r.productId && r.plannedQty > 0);
     if (validRows.length === 0) return;
@@ -333,36 +346,54 @@ export default function NouvelleSaisiePage() {
     setPlanningRows(validRows.map((r) => ({ ...r })));
     setPlanningSaved(true);
     setPlanningEditLocked(true);
-    // Auto-populate Shift A targets from planning
-    populateShiftAFromPlanning(validRows);
+    // Répartir automatiquement les objectifs entre les shifts
+    distributeTargetsFromPlanning(validRows);
   }
 
-  function populateShiftAFromPlanning(planRows: PlanningRow[]) {
-    setRowsA((prev) => {
-      // Map existing rows by productId+line to update targets; append missing
-      const existing = [...prev];
-      for (const p of planRows) {
-        const match = existing.find(
-          (r) => r.productId === p.productId && (p.line === "" || r.line === p.line)
-        );
-        if (match) {
-          match.target = p.plannedQty;
-          if (p.line) match.line = p.line;
-        } else {
-          existing.push({
-            id: `row-${++rowSeq}`,
-            line: p.line || "",
-            productId: p.productId,
-            unit: p.unit,
-            target: p.plannedQty,
-            produced: 0,
-            conforme: 0,
-            rejete: 0,
-          });
-        }
+  function distributeTargetsFromPlanning(planRows: PlanningRow[]) {
+    const productsA = planRows.filter((p) => p.shifts.includes("A"));
+    const productsB = planRows.filter((p) => p.shifts.includes("B"));
+
+    setRowsA((prev) => syncShiftRows(prev, productsA, planRows));
+    setRowsB((prev) => syncShiftRows(prev, productsB, planRows));
+  }
+
+  function syncShiftRows(
+    prevRows: ProductionRow[],
+    shiftPlanRows: PlanningRow[],
+    allPlanRows: PlanningRow[]
+  ): ProductionRow[] {
+    const result = [...prevRows];
+    for (const p of shiftPlanRows) {
+      const target = computeShiftTarget(p, allPlanRows);
+      const match = result.find(
+        (r) => r.productId === p.productId && (p.line === "" || r.line === p.line)
+      );
+      if (match) {
+        match.target = target;
+        if (p.line) match.line = p.line;
+      } else {
+        result.push({
+          id: `row-${++rowSeq}`,
+          line: p.line || "",
+          productId: p.productId,
+          unit: p.unit,
+          target,
+          produced: 0,
+          conforme: 0,
+          rejete: 0,
+        });
       }
-      return existing;
-    });
+    }
+    return result;
+  }
+
+  function computeShiftTarget(planRow: PlanningRow, allPlanRows: PlanningRow[]): number {
+    const inBothShifts = planRow.shifts.includes("A") && planRow.shifts.includes("B");
+    if (inBothShifts) {
+      return Math.round(planRow.plannedQty / 2);
+    }
+    return planRow.plannedQty;
   }
 
   // Planning vs actual comparison
@@ -687,11 +718,6 @@ export default function NouvelleSaisiePage() {
         </p>
       </div>
 
-      {/* Step badge */}
-      <Badge variant="warning" className="w-fit">
-        <Info className="h-3 w-3" /> Étape 1 / 4
-      </Badge>
-
       {/* Section 1: General info */}
       <Card className="animate-fade-in">
         <CardHeader>
@@ -745,10 +771,11 @@ export default function NouvelleSaisiePage() {
                   </Button>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm min-w-[480px]">
+                  <table className="w-full text-sm min-w-[600px]">
                     <thead>
                       <tr className="border-b border-border text-left text-xs text-muted-foreground">
                         <th className="px-3 py-2 font-medium">Produit</th>
+                        <th className="px-3 py-2 font-medium w-[160px]">Shifts</th>
                         <th className="px-3 py-2 text-right font-medium w-[120px]">Qté planifiée</th>
                         <th className="px-3 py-2 font-medium">Observations</th>
                       </tr>
@@ -759,6 +786,11 @@ export default function NouvelleSaisiePage() {
                         return (
                           <tr key={r.id} className="border-b border-border/50">
                             <td className="px-3 py-2 font-medium">{product?.name ?? r.productId}</td>
+                            <td className="px-3 py-2">
+                              <span className="text-sm text-muted-foreground">
+                                {r.shifts.includes("A") && r.shifts.includes("B") ? "A + B (50/50)" : r.shifts.includes("A") ? "Shift A" : r.shifts.includes("B") ? "Shift B" : "—"}
+                              </span>
+                            </td>
                             <td className="px-3 py-2 text-right font-semibold">{formatNumber(r.plannedQty, 1)}</td>
                             <td className="px-3 py-2 text-muted-foreground">{r.observations || "—"}</td>
                           </tr>
@@ -772,12 +804,13 @@ export default function NouvelleSaisiePage() {
           ) : (
             <>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[560px]">
+                <table className="w-full text-sm min-w-[720px]">
                   <thead>
                     <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                      <th className="px-3 py-3 font-medium min-w-[220px]">Produit</th>
-                      <th className="px-3 py-3 text-right font-medium w-[120px]">Qté planifiée</th>
-                      <th className="px-3 py-3 font-medium min-w-[180px]">Observations</th>
+                      <th className="px-3 py-3 font-medium min-w-[200px]">Produit</th>
+                      <th className="px-3 py-3 font-medium w-[150px]">Shifts</th>
+                      <th className="px-3 py-3 text-right font-medium w-[110px]">Qté planifiée</th>
+                      <th className="px-3 py-3 font-medium min-w-[160px]">Observations</th>
                       <th className="px-3 py-3 font-medium w-[44px]" />
                     </tr>
                   </thead>
@@ -803,6 +836,37 @@ export default function NouvelleSaisiePage() {
                                 Lignes autorisées : {product.allowedLines.join(", ")}
                               </span>
                             )}
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => togglePlanningShift(r.id, "A")}
+                                className={cn(
+                                  "h-7 px-2.5 rounded-md text-xs font-medium border transition-colors",
+                                  r.shifts.includes("A")
+                                    ? "bg-secondary text-white border-secondary"
+                                    : "bg-card text-muted-foreground border-border hover:bg-muted"
+                                )}
+                              >
+                                A
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => togglePlanningShift(r.id, "B")}
+                                className={cn(
+                                  "h-7 px-2.5 rounded-md text-xs font-medium border transition-colors",
+                                  r.shifts.includes("B")
+                                    ? "bg-secondary text-white border-secondary"
+                                    : "bg-card text-muted-foreground border-border hover:bg-muted"
+                                )}
+                              >
+                                B
+                              </button>
+                              {r.shifts.includes("A") && r.shifts.includes("B") && (
+                                <span className="text-[10px] text-muted-foreground">(50/50)</span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-3 py-2">
                             <input

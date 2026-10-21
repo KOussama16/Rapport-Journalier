@@ -8,6 +8,7 @@ export interface PrintProductionRow {
   productId: string;
   productName: string;
   unit: Unit;
+  capacity: number | null;
   target: number;
   produced: number;
   conforme: number;

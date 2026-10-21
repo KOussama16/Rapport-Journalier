@@ -276,24 +276,29 @@ export function PrintableReport({ data }: PrintableReportProps) {
             <table className="print-table">
               <thead>
                 <tr>
-                  <th className="print-th-left" style={{ width: "8%" }}>Ligne</th>
-                  <th className="print-th-left" style={{ width: "34%" }}>Produit</th>
-                  <th className="print-th-right" style={{ width: "9%" }}>Cible</th>
-                  <th className="print-th-right" style={{ width: "9%" }}>Réalisée</th>
-                  <th className="print-th-right" style={{ width: "8%" }}>Conforme</th>
-                  <th className="print-th-right" style={{ width: "8%" }}>Rejetée</th>
-                  <th className="print-th-right" style={{ width: "9%" }}>Écart</th>
-                  <th className="print-th-right" style={{ width: "8%" }}>Taux</th>
+                  <th className="print-th-left" style={{ width: "7%" }}>Ligne</th>
+                  <th className="print-th-left" style={{ width: "27%" }}>Produit</th>
+                  <th className="print-th-right" style={{ width: "9%" }}>Capacité</th>
+                  <th className="print-th-right" style={{ width: "8%" }}>Cible</th>
+                  <th className="print-th-right" style={{ width: "8%" }}>Réalisée</th>
+                  <th className="print-th-right" style={{ width: "7%" }}>Conforme</th>
+                  <th className="print-th-right" style={{ width: "7%" }}>Rejetée</th>
+                  <th className="print-th-right" style={{ width: "8%" }}>Écart</th>
+                  <th className="print-th-right" style={{ width: "7%" }}>Taux</th>
+                  <th className="print-th-right" style={{ width: "7%" }}>Utilis.</th>
                 </tr>
               </thead>
               <tbody>
                 {validRows.map((r, i) => {
                   const ecart = r.produced - r.target;
                   const rate = rateOf(r.target, r.produced);
+                  const util = r.capacity !== null && r.capacity > 0 ? (r.produced / r.capacity) * 100 : null;
+                  const utilColor = util === null ? "#64748b" : util >= 90 ? "#16a34a" : util >= 70 ? "#f97316" : "#dc2626";
                   return (
                     <tr key={i}>
                       <td className="print-td-strong">{r.line || "—"}</td>
                       <td className="print-td-left">{r.productName}</td>
+                      <td className="print-td-right">{r.capacity !== null ? formatNumber(r.capacity, 0) : "—"}</td>
                       <td className="print-td-right">{formatNumber(r.target, 1)}</td>
                       <td className="print-td-right">{formatNumber(r.produced, 1)}</td>
                       <td className="print-td-right" style={{ color: "#16a34a" }}>{formatNumber(r.conforme, 1)}</td>
@@ -303,6 +308,9 @@ export function PrintableReport({ data }: PrintableReportProps) {
                       </td>
                       <td className="print-td-right" style={{ color: rateColor(rate), fontWeight: 700 }}>
                         {rateBadge(rate)}
+                      </td>
+                      <td className="print-td-right" style={{ color: utilColor, fontWeight: 700 }}>
+                        {util !== null ? `${util.toFixed(1)}%` : "—"}
                       </td>
                     </tr>
                   );

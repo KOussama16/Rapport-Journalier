@@ -17,6 +17,11 @@ import {
   isCompatible,
   type ProductionLine,
 } from "@/lib/production-referential";
+import {
+  computeCapacity,
+  utilizationRate,
+  DEFAULT_SHIFT_DURATION_HOURS,
+} from "@/lib/capacity-referential";
 
 const SHIFT_TABLES: { key: "A" | "B"; label: string; icon: typeof Factory; start: string; end: string }[] = [
   { key: "A", label: "Shift A", icon: Sunrise, start: "08:00", end: "15:30" },
@@ -223,6 +228,10 @@ export default function NouvelleSaisiePage() {
   const [rowsA, setRowsA] = useState<ProductionRow[]>([makeRow()]);
   const [rowsB, setRowsB] = useState<ProductionRow[]>([makeRow()]);
 
+  // Durée productive par shift (heures) — défaut 7h
+  const [durationA, setDurationA] = useState(DEFAULT_SHIFT_DURATION_HOURS);
+  const [durationB, setDurationB] = useState(DEFAULT_SHIFT_DURATION_HOURS);
+
   // Saved state
   const [saved, setSaved] = useState(false);
 
@@ -422,6 +431,13 @@ export default function NouvelleSaisiePage() {
     if (key === "A") setRowsA(updater);
     else setRowsB(updater);
   }
+  function durationFor(key: ShiftKey): number {
+    return key === "A" ? durationA : durationB;
+  }
+  function setDurationFor(key: ShiftKey, v: number) {
+    if (key === "A") setDurationA(v);
+    else setDurationB(v);
+  }
 
   function updateRow(key: ShiftKey, id: string, patch: Partial<ProductionRow>) {
     setRowsFor(key, (prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -576,15 +592,18 @@ export default function NouvelleSaisiePage() {
   const buildPrintData = useCallback((): PrintableReportData => {
     const reportId = `RPT-${today}`;
     const shiftData = SHIFT_TABLES.map((t) => {
+      const duration = durationFor(t.key);
       const rows = rowsFor(t.key)
         .filter((r) => r.productId)
         .map((r) => {
           const product = getProductById(r.productId);
+          const capacity = computeCapacity(r.productId, r.line, duration);
           return {
             line: r.line,
             productId: r.productId,
             productName: product?.name ?? r.productId,
             unit: r.unit,
+            capacity,
             target: r.target,
             produced: r.produced,
             conforme: r.conforme,
@@ -652,7 +671,7 @@ export default function NouvelleSaisiePage() {
       stops: printStops,
       incidents: printIncidents,
     };
-  }, [rowsA, rowsB, losses, stops, incidents, operator, reportStatus, observations, today, dateDisplay]);
+  }, [rowsA, rowsB, losses, stops, incidents, operator, reportStatus, observations, today, dateDisplay, durationA, durationB]);
 
   function openPrintPreview() {
     setPrintData(buildPrintData());
@@ -845,6 +864,7 @@ export default function NouvelleSaisiePage() {
         const rows = rowsFor(key);
         const sum = key === "A" ? summaryA : summaryB;
         const validCount = key === "A" ? validA : validB;
+        const duration = durationFor(key);
         const Icon = table.icon;
         return (
           <Card key={key} className="animate-fade-in">
@@ -855,7 +875,7 @@ export default function NouvelleSaisiePage() {
                     <Icon className="h-4 w-4 text-secondary" /> {table.label} — Saisie de la production
                   </CardTitle>
                   <CardDescription>
-                    {table.start} – {table.end} · Sélectionnez une ligne puis un produit compatible.
+                    {table.start} – {table.end} · Sélectionnez une ligne puis un produit compatible. La capacité est calculée automatiquement selon la cadence et la durée productive.
                   </CardDescription>
                 </div>
                 <div className="hidden items-center gap-2 sm:flex">
@@ -865,18 +885,39 @@ export default function NouvelleSaisiePage() {
               </div>
             </CardHeader>
             <CardContent className="px-0">
+              {/* Durée productive du shift */}
+              <div className="flex items-center gap-3 px-5 pb-3">
+                <label htmlFor={`duration-${key}`} className="text-xs font-medium text-muted-foreground whitespace-nowrap">
+                  Durée productive du shift :
+                </label>
+                <input
+                  type="number"
+                  id={`duration-${key}`}
+                  min={0}
+                  step="0.25"
+                  value={duration}
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value);
+                    setDurationFor(key, (!isFinite(v) || v < 0) ? 0 : v);
+                  }}
+                  className="h-8 w-20 rounded-lg border border-border bg-card px-2 text-right text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+                <span className="text-xs text-muted-foreground">heures (défaut {DEFAULT_SHIFT_DURATION_HOURS} h)</span>
+              </div>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[830px]">
+                <table className="w-full text-sm min-w-[1040px]">
                   <thead>
                     <tr className="border-b border-border text-left text-xs text-muted-foreground">
                       <th className="px-3 py-3 font-medium w-[90px]">Ligne</th>
-                      <th className="px-3 py-3 font-medium min-w-[220px]">Produit</th>
+                      <th className="px-3 py-3 font-medium min-w-[200px]">Produit</th>
+                      <th className="px-3 py-3 text-right font-medium w-[110px]">Capacité</th>
                       <th className="px-3 py-3 text-right font-medium w-[100px]">Qté cible</th>
                       <th className="px-3 py-3 text-right font-medium w-[100px]">Qté réalisée</th>
                       <th className="px-3 py-3 text-right font-medium w-[100px]">Conforme</th>
                       <th className="px-3 py-3 text-right font-medium w-[100px]">Rejetée</th>
                       <th className="px-3 py-3 text-right font-medium w-[110px]">Écart</th>
                       <th className="px-3 py-3 font-medium w-[80px]">Taux</th>
+                      <th className="px-3 py-3 font-medium w-[90px]">Utilis.</th>
                       <th className="px-3 py-3 font-medium w-[44px]" />
                     </tr>
                   </thead>
@@ -888,6 +929,9 @@ export default function NouvelleSaisiePage() {
                       const ecartColor = ecart >= 0 ? "text-accent" : "text-error";
                       const availableProducts = r.line ? productsForLine(r.line) : [];
                       const product = r.productId ? getProductById(r.productId) : undefined;
+                      const capacity = computeCapacity(r.productId, r.line, duration);
+                      const util = utilizationRate(r.produced, capacity);
+                      const utilColor = util === null ? "#64748b" : util >= 90 ? "#16a34a" : util >= 70 ? "#f97316" : "#dc2626";
                       return (
                         <tr key={r.id} className="border-b border-border/50 align-middle hover:bg-muted/40">
                           <td className="px-3 py-2">
@@ -927,6 +971,18 @@ export default function NouvelleSaisiePage() {
                               </span>
                             )}
                           </td>
+                          <td className="px-3 py-2 text-right whitespace-nowrap">
+                            {capacity !== null ? (
+                              <span className="font-medium text-foreground">{formatNumber(capacity, 0)}</span>
+                            ) : r.productId && r.line ? (
+                              <span className="text-xs italic text-muted-foreground" title="Aucune cadence définie pour ce produit/ligne">Non définie</span>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                            {capacity !== null && (
+                              <span className="ml-1 text-[10px] text-muted-foreground">{UNIT_LABELS[r.unit]}</span>
+                            )}
+                          </td>
                           <td className="px-3 py-2">
                             <NumInput value={r.target} onChange={(v) => updateRow(key, r.id, { target: v })} />
                           </td>
@@ -949,6 +1005,14 @@ export default function NouvelleSaisiePage() {
                               style={{ backgroundColor: `${rColor}15`, color: rColor }}
                             >
                               {rateBadge(rate)}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2">
+                            <span
+                              className="inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold"
+                              style={{ backgroundColor: `${utilColor}15`, color: utilColor }}
+                            >
+                              {util !== null ? `${util.toFixed(1)}%` : "—"}
                             </span>
                           </td>
                           <td className="px-3 py-2 text-right">

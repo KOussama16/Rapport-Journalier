@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState, useCallback } from "react";
-import { Plus, Trash as Trash2, Package, Target, Percent, FileCheck as FileCheck2, Clock, Factory, Save, Info, Layers, Sunrise, Sunset, Calendar, TrendingDown, TriangleAlert as AlertTriangle, Wrench, Printer, Eye } from "lucide-react";
+import { useMemo, useState, useCallback, useEffect, useRef } from "react";
+import { Plus, Trash as Trash2, Package, Target, Percent, FileCheck as FileCheck2, Clock, Factory, Save, Info, Layers, Sunrise, Sunset, Calendar, TrendingDown, TriangleAlert as AlertTriangle, Wrench, Printer, Eye, ClipboardList, CheckCircle2, Pencil } from "lucide-react";
+import { PRODUCT_REFERENTIAL } from "@/lib/production-referential";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -162,6 +163,37 @@ function makeRow(): ProductionRow {
   };
 }
 
+// --- Planning (Direction Générale) -------------------------------------------
+
+interface PlanningRow {
+  id: string;
+  productId: string;
+  line: ProductionLine | "";
+  plannedQty: number;
+  unit: Unit;
+  observations: string;
+}
+
+let planSeq = 0;
+function makePlanningRow(): PlanningRow {
+  return {
+    id: `plan-${++planSeq}`,
+    productId: "",
+    line: "",
+    plannedQty: 0,
+    unit: "unité",
+    observations: "",
+  };
+}
+
+const PLANNING_STORAGE_KEY = (date: string) => `la-bergere-planning-${date}`;
+
+interface SavedPlanning {
+  date: string;
+  rows: PlanningRow[];
+  savedAt: string;
+}
+
 function clampNonNeg(v: string): number {
   const n = parseFloat(v);
   if (!isFinite(n) || n < 0) return 0;
@@ -193,6 +225,174 @@ export default function NouvelleSaisiePage() {
 
   // Saved state
   const [saved, setSaved] = useState(false);
+
+  // Planning (Direction Générale) — persisted in localStorage per date
+  const [planningRows, setPlanningRows] = useState<PlanningRow[]>([makePlanningRow()]);
+  const [planningSaved, setPlanningSaved] = useState(false);
+  const [planningEditLocked, setPlanningEditLocked] = useState(false);
+  const loadedDateRef = useRef<string | null>(null);
+
+  // Load planning from localStorage on mount / date change
+  useEffect(() => {
+    if (loadedDateRef.current === today) return;
+    loadedDateRef.current = today;
+    try {
+      const raw = localStorage.getItem(PLANNING_STORAGE_KEY(today));
+      if (raw) {
+        const parsed = JSON.parse(raw) as SavedPlanning;
+        if (parsed.rows && parsed.rows.length > 0) {
+          // Reset sequence counter to avoid id collisions
+          for (const r of parsed.rows) {
+            const num = parseInt(r.id.replace("plan-", ""), 10);
+            if (!isNaN(num) && num > planSeq) planSeq = num;
+          }
+          setPlanningRows(parsed.rows.map((r) => ({ ...r })));
+          setPlanningSaved(true);
+          setPlanningEditLocked(true);
+          return;
+        }
+      }
+    } catch {
+      // ignore parse errors
+    }
+    setPlanningRows([makePlanningRow()]);
+    setPlanningSaved(false);
+    setPlanningEditLocked(false);
+  }, [today]);
+
+  function updatePlanningRow(id: string, patch: Partial<PlanningRow>) {
+    setPlanningRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+    setPlanningSaved(false);
+  }
+
+  function changePlanningProduct(id: string, productId: string) {
+    const product = getProductById(productId);
+    if (!product) {
+      updatePlanningRow(id, { productId: "", unit: "unité", plannedQty: 0 });
+      return;
+    }
+    const existingLine = planningRows.find((r) => r.id === id)?.line;
+    const compatibleLine =
+      existingLine && product.allowedLines.includes(existingLine)
+        ? existingLine
+        : product.allowedLines[0] ?? "";
+    updatePlanningRow(id, {
+      productId,
+      unit: product.unit,
+      line: compatibleLine,
+    });
+  }
+
+  function changePlanningLine(id: string, newLine: ProductionLine) {
+    const row = planningRows.find((r) => r.id === id);
+    if (!row) return;
+    if (row.productId && !isCompatible(row.productId, newLine)) {
+      updatePlanningRow(id, { line: newLine, productId: "", unit: "unité" });
+    } else {
+      updatePlanningRow(id, { line: newLine });
+    }
+  }
+
+  function addPlanningRow() {
+    setPlanningRows((prev) => [...prev, makePlanningRow()]);
+    setPlanningSaved(false);
+  }
+
+  function removePlanningRow(id: string) {
+    setPlanningRows((prev) => (prev.length > 1 ? prev.filter((r) => r.id !== id) : prev));
+    setPlanningSaved(false);
+  }
+
+  function editPlanning() {
+    setPlanningEditLocked(false);
+    setPlanningSaved(false);
+  }
+
+  function savePlanning() {
+    const validRows = planningRows.filter((r) => r.productId && r.plannedQty > 0);
+    if (validRows.length === 0) return;
+    const payload: SavedPlanning = {
+      date: today,
+      rows: validRows.map((r) => ({ ...r })),
+      savedAt: new Date().toISOString(),
+    };
+    try {
+      localStorage.setItem(PLANNING_STORAGE_KEY(today), JSON.stringify(payload));
+    } catch {
+      // storage may be unavailable; state still works in-session
+    }
+    setPlanningRows(validRows.map((r) => ({ ...r })));
+    setPlanningSaved(true);
+    setPlanningEditLocked(true);
+    // Auto-populate Shift A targets from planning
+    populateShiftAFromPlanning(validRows);
+  }
+
+  function populateShiftAFromPlanning(planRows: PlanningRow[]) {
+    setRowsA((prev) => {
+      // Map existing rows by productId+line to update targets; append missing
+      const existing = [...prev];
+      for (const p of planRows) {
+        const match = existing.find(
+          (r) => r.productId === p.productId && (p.line === "" || r.line === p.line)
+        );
+        if (match) {
+          match.target = p.plannedQty;
+          if (p.line) match.line = p.line;
+        } else {
+          existing.push({
+            id: `row-${++rowSeq}`,
+            line: p.line || "",
+            productId: p.productId,
+            unit: p.unit,
+            target: p.plannedQty,
+            produced: 0,
+            conforme: 0,
+            rejete: 0,
+          });
+        }
+      }
+      return existing;
+    });
+  }
+
+  // Planning vs actual comparison
+  const planningComparison = useMemo(() => {
+    const planByProduct = new Map<string, { productName: string; planned: number; unit: Unit; line: string }>();
+    for (const r of planningRows) {
+      if (!r.productId || r.plannedQty <= 0) continue;
+      const product = getProductById(r.productId);
+      const existing = planByProduct.get(r.productId);
+      if (existing) {
+        // Avoid double-counting: take max planned across rows for same product
+        existing.planned = Math.max(existing.planned, r.plannedQty);
+        if (!existing.line && r.line) existing.line = r.line;
+      } else {
+        planByProduct.set(r.productId, {
+          productName: product?.name ?? r.productId,
+          planned: r.plannedQty,
+          unit: r.unit,
+          line: r.line || "",
+        });
+      }
+    }
+    // Sum actual produced per product across both shifts
+    const actualByProduct = new Map<string, number>();
+    for (const r of [...rowsA, ...rowsB]) {
+      if (!r.productId) continue;
+      actualByProduct.set(r.productId, (actualByProduct.get(r.productId) ?? 0) + r.produced);
+    }
+    const rows = Array.from(planByProduct.entries()).map(([pid, p]) => {
+      const actual = actualByProduct.get(pid) ?? 0;
+      const ecart = actual - p.planned;
+      const rate = p.planned > 0 ? (actual / p.planned) * 100 : null;
+      return { productId: pid, productName: p.productName, planned: p.planned, actual, ecart, rate, unit: p.unit, line: p.line };
+    });
+    const totalPlanned = rows.reduce((s, r) => s + r.planned, 0);
+    const totalActual = rows.reduce((s, r) => s + r.actual, 0);
+    const overallRate = totalPlanned > 0 ? (totalActual / totalPlanned) * 100 : null;
+    return { rows, totalPlanned, totalActual, overallRate };
+  }, [planningRows, rowsA, rowsB]);
 
   // Pertes, arrêts, incidents
   const [losses, setLosses] = useState<LossRow[]>([makeLoss()]);
@@ -545,6 +745,176 @@ export default function NouvelleSaisiePage() {
               />
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Section: Planification de production — Objectifs Direction Générale */}
+      <Card className="animate-fade-in border-secondary/30">
+        <CardHeader>
+          <div className="flex flex-row items-center justify-between gap-4">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <ClipboardList className="h-4 w-4 text-secondary" /> Planification de production — Objectifs communiqués par la Direction Générale
+              </CardTitle>
+              <CardDescription>
+                Saisissez le planning journalier communiqué par la DG. Après enregistrement, les objectifs planifiés sont automatiquement repris dans les sections Shift A et Shift B pour comparaison avec la production réelle.
+              </CardDescription>
+            </div>
+            <div className="hidden items-center gap-2 sm:flex">
+              {planningSaved ? (
+                <Badge variant="success"><CheckCircle2 className="h-3 w-3" /> Planning enregistré</Badge>
+              ) : (
+                <Badge variant="warning">Non enregistré</Badge>
+              )}
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="px-0">
+          {planningEditLocked && planningSaved ? (
+            <div className="px-5">
+              <div className="rounded-lg border border-accent/30 bg-accent/5 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-sm font-medium text-foreground">
+                    Planning enregistré le {new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date())}
+                  </p>
+                  <Button variant="outline" size="sm" onClick={editPlanning}>
+                    <Pencil className="h-3.5 w-3.5" /> Modifier
+                  </Button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[640px]">
+                    <thead>
+                      <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                        <th className="px-3 py-2 font-medium">Produit</th>
+                        <th className="px-3 py-2 font-medium w-[90px]">Ligne</th>
+                        <th className="px-3 py-2 text-right font-medium w-[120px]">Qté planifiée</th>
+                        <th className="px-3 py-2 font-medium w-[70px]">Unité</th>
+                        <th className="px-3 py-2 font-medium">Observations</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {planningRows.filter((r) => r.productId).map((r) => {
+                        const product = getProductById(r.productId);
+                        return (
+                          <tr key={r.id} className="border-b border-border/50">
+                            <td className="px-3 py-2 font-medium">{product?.name ?? r.productId}</td>
+                            <td className="px-3 py-2">{r.line || "—"}</td>
+                            <td className="px-3 py-2 text-right font-semibold">{formatNumber(r.plannedQty, 1)}</td>
+                            <td className="px-3 py-2">{UNIT_LABELS[r.unit]}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{r.observations || "—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm min-w-[760px]">
+                  <thead>
+                    <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                      <th className="px-3 py-3 font-medium min-w-[220px]">Produit</th>
+                      <th className="px-3 py-3 font-medium w-[90px]">Ligne</th>
+                      <th className="px-3 py-3 text-right font-medium w-[120px]">Qté planifiée</th>
+                      <th className="px-3 py-3 font-medium w-[70px]">Unité</th>
+                      <th className="px-3 py-3 font-medium min-w-[180px]">Observations</th>
+                      <th className="px-3 py-3 font-medium w-[44px]" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {planningRows.map((r) => {
+                      const product = r.productId ? getProductById(r.productId) : undefined;
+                      const availableProducts = r.line ? productsForLine(r.line) : PRODUCT_REFERENTIAL;
+                      return (
+                        <tr key={r.id} className="border-b border-border/50 align-middle hover:bg-muted/40">
+                          <td className="px-3 py-2">
+                            <select
+                              value={r.productId}
+                              onChange={(e) => changePlanningProduct(r.id, e.target.value)}
+                              className={cn(selCls)}
+                            >
+                              <option value="">Sélectionner un produit</option>
+                              {availableProducts.map((p) => (
+                                <option key={p.id} value={p.id}>{p.name}</option>
+                              ))}
+                            </select>
+                            {product && (
+                              <span className="mt-1 block text-[10px] text-muted-foreground">
+                                Lignes autorisées : {product.allowedLines.join(", ")}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            <select
+                              value={r.line}
+                              onChange={(e) => changePlanningLine(r.id, e.target.value as ProductionLine)}
+                              className={selCls}
+                            >
+                              <option value="">—</option>
+                              {PRODUCTION_LINES.map((l) => (
+                                <option key={l} value={l}>{l}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="number"
+                              min={0}
+                              step="any"
+                              value={r.plannedQty === 0 ? "" : r.plannedQty}
+                              placeholder="0"
+                              onChange={(e) => updatePlanningRow(r.id, { plannedQty: clampNonNeg(e.target.value) })}
+                              className="h-9 w-full rounded-lg border border-border bg-card px-2 text-right text-sm text-foreground transition-colors focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <span className="inline-flex rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
+                              {UNIT_LABELS[r.unit]}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="text"
+                              value={r.observations}
+                              onChange={(e) => updatePlanningRow(r.id, { observations: e.target.value })}
+                              placeholder="Facultatif…"
+                              className={inpCls}
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <button
+                              onClick={() => removePlanningRow(r.id)}
+                              disabled={planningRows.length === 1}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-error/10 hover:text-error disabled:opacity-30"
+                              aria-label="Supprimer la ligne"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex flex-col gap-3 px-5 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <Button variant="secondary" size="sm" onClick={addPlanningRow}>
+                  <Plus className="h-4 w-4" /> Ajouter un produit
+                </Button>
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={savePlanning}
+                  disabled={planningRows.filter((r) => r.productId && r.plannedQty > 0).length === 0}
+                >
+                  <Save className="h-4 w-4" /> Enregistrer le planning
+                </Button>
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
 
@@ -1008,6 +1378,83 @@ export default function NouvelleSaisiePage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Section: Synthèse Planning DG vs Production réelle */}
+      {planningComparison.rows.length > 0 && (
+        <Card className="animate-fade-in border-secondary/30 bg-gradient-to-r from-secondary/5 to-transparent">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ClipboardList className="h-4 w-4 text-secondary" /> Synthèse — Planning Direction Générale vs Production réelle
+            </CardTitle>
+            <CardDescription>
+              Comparaison automatique entre les objectifs planifiés par la DG et les quantités réellement produites (Shift A + Shift B). L&apos;objectif planifié n&apos;est compté qu&apos;une fois par produit, même s&apos;il est fabriqué sur les deux shifts.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-5">
+              <SummaryStat
+                icon={Target}
+                color="#0891b2"
+                label="Total planifié (DG)"
+                value={formatNumber(planningComparison.totalPlanned, 1)}
+              />
+              <SummaryStat
+                icon={Package}
+                color="#2563eb"
+                label="Total réalisé"
+                value={formatNumber(planningComparison.totalActual, 1)}
+              />
+              <SummaryStat
+                icon={Percent}
+                color={rateColor(planningComparison.overallRate)}
+                label="Taux de réalisation global"
+                value={planningComparison.overallRate !== null ? `${planningComparison.overallRate.toFixed(1)} %` : "—"}
+              />
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[720px]">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                    <th className="px-3 py-2 font-medium min-w-[200px]">Produit</th>
+                    <th className="px-3 py-2 font-medium w-[80px]">Ligne</th>
+                    <th className="px-3 py-2 text-right font-medium w-[110px]">Planifié (DG)</th>
+                    <th className="px-3 py-2 text-right font-medium w-[110px]">Réalisé</th>
+                    <th className="px-3 py-2 text-right font-medium w-[110px]">Écart</th>
+                    <th className="px-3 py-2 font-medium w-[80px]">Taux</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {planningComparison.rows.map((r) => {
+                    const rate = r.rate;
+                    const rColor = rateColor(rate);
+                    const ecartColor = r.ecart >= 0 ? "text-accent" : "text-error";
+                    return (
+                      <tr key={r.productId} className="border-b border-border/50">
+                        <td className="px-3 py-2 font-medium">{r.productName}</td>
+                        <td className="px-3 py-2 text-muted-foreground">{r.line || "—"}</td>
+                        <td className="px-3 py-2 text-right">{formatNumber(r.planned, 1)} <span className="text-muted-foreground font-normal">{UNIT_LABELS[r.unit]}</span></td>
+                        <td className="px-3 py-2 text-right">{formatNumber(r.actual, 1)} <span className="text-muted-foreground font-normal">{UNIT_LABELS[r.unit]}</span></td>
+                        <td className={cn("px-3 py-2 text-right font-medium", ecartColor)}>
+                          {r.ecart >= 0 ? "+" : ""}{formatNumber(r.ecart, 1)} <span className="text-muted-foreground font-normal">{UNIT_LABELS[r.unit]}</span>
+                        </td>
+                        <td className="px-3 py-2">
+                          <span
+                            className="inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold"
+                            style={{ backgroundColor: `${rColor}15`, color: rColor }}
+                          >
+                            {rate !== null ? `${rate.toFixed(1)}%` : "—"}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Section: Résumé global */}
       <Card className="animate-fade-in border-secondary/30 bg-gradient-to-r from-secondary/5 to-transparent">
